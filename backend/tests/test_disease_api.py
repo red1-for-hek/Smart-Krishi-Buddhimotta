@@ -104,6 +104,38 @@ class DiseaseApiTests(unittest.TestCase):
         self.assertEqual(result["guidance"]["products"][0]["rate"], "২ গ্রাম / ১ লিটার পানি")
         self.assertEqual(result["top_predictions"], [])
 
+    def test_qwen_rice_result_returns_automatic_verified_blast_product(self) -> None:
+        visual = {
+            "leaf_status": "leaf",
+            "crop_en": "rice",
+            "crop_bn": "ধান",
+            "disease_en": "rice blast",
+            "disease_bn": "ধানের ব্লাস্ট",
+            "cause_type": "fungal",
+            "pathogen_en": None,
+            "visible_signs_bn": ["পাতায় লম্বাটে দাগ"],
+            "nonchemical_actions_bn": [],
+            "confidence_band": "medium",
+            "plantvillage_class_label": None,
+        }
+        vision_response = {
+            "available": True,
+            "status": "ok",
+            "model": "qwen/qwen3.8-27b",
+            "result": visual,
+            "image_sent_to_groq": True,
+        }
+        fake_module = self._fake_model_module()
+        with patch.dict(sys.modules, {"disease_model": fake_module}), patch.object(
+            main, "_load_disease_model", side_effect=FileNotFoundError()
+        ), patch.object(main, "analyze_leaf_image", return_value=vision_response):
+            result = main.disease(DiseaseRequest(image_data_url=_image_data_url()))
+
+        self.assertEqual(result["diagnosis"]["crop_label"], "ধান")
+        self.assertEqual(result["diagnosis"]["disease_label"], "ব্লাস্ট")
+        self.assertEqual(result["guidance"]["products"][0]["registration_no"], "AP-5112")
+        self.assertEqual(result["guidance"]["products"][0]["rate"], "২ মিলি/লিটার পানি; ১০০০ মিলি/হেক্টর")
+
     def test_local_classifier_remains_the_fallback_when_qwen_is_not_configured(self) -> None:
         labels = list(DISEASE_TRANSLATION)
         probabilities = numpy.zeros(len(labels), dtype=numpy.float64)
