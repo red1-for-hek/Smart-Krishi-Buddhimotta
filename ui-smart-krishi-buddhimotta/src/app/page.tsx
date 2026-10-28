@@ -588,17 +588,6 @@ function DiseaseAssistant({
 }) {
   const diagnosis = result?.diagnosis;
   const healthy = (diagnosis?.leaf_status === "leaf" && diagnosis.cause_type === "healthy") || result?.guidance.category === "healthy_class";
-  const canSearchOnline = Boolean(
-    diagnosis?.leaf_status === "leaf" &&
-    diagnosis.confidence_band !== "low" &&
-    diagnosis.crop_label && !diagnosis.crop_label.includes("অনিশ্চিত") &&
-    diagnosis.disease_label &&
-    !healthy &&
-    !/(লক্ষণ স্পষ্ট নয়|রোগ শনাক্ত করা যায়নি|রোগ অনিশ্চিত)/i.test(diagnosis.disease_label),
-  );
-  const onlineGuidanceSearchUrl = canSearchOnline && diagnosis
-    ? `https://www.google.com/search?q=${encodeURIComponent(`${diagnosis.crop_label} ${diagnosis.disease_label} Bangladesh crop disease management pesticide (site:gov.bd OR site:edu.bd)`)}`
-    : null;
   const actions = diagnosis?.nonchemical_actions_bn.length
     ? diagnosis.nonchemical_actions_bn.slice(0, 2)
     : (result?.guidance.actions ?? []).slice(0, 2);
@@ -692,10 +681,6 @@ function DiseaseAssistant({
           </> : <>
             <p>{healthy ? "ছবিতে স্পষ্ট রোগচিহ্ন নেই; রোগ বা পুষ্টিঘাটতির প্রমাণ ছাড়া ওষুধ/সার দেবেন না।" : "এই ফল থেকে নির্ভরযোগ্য ফসল–রোগ মিল ও DAE-যাচাইকৃত পণ্যের মাত্রা নিশ্চিত করা যায়নি।"}</p>
             <p className="small-caveat">{result.guidance.product_note}</p>
-            {onlineGuidanceSearchUrl && <>
-              <a className="product-source-link" href={onlineGuidanceSearchUrl} target="_blank" rel="noreferrer">সরকারি/বিশ্ববিদ্যালয় সূত্রে অনলাইনে খুঁজুন <MoveUpRight size={14}/></a>
-              <p className="small-caveat">এটি সার্চ লিংক, অ্যাপ-যাচাইকৃত ওষুধের পরামর্শ নয়। ফলাফলের পণ্য/মাত্রা বাংলাদেশি বর্তমান লেবেল ও কৃষি কর্মকর্তার সঙ্গে মিলিয়ে নিন।</p>
-            </>}
             {!healthy && <p className="small-caveat">নিজে থেকে ব্র্যান্ড, মাত্রা, মিশ্রণ বা পাতায়/গোড়ায় প্রয়োগ ঠিক করবেন না; আগে উপজেলা কৃষি অফিসে যাচাই করুন।</p>}
           </>}
         </div>
