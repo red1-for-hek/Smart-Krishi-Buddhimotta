@@ -33,6 +33,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from backend.ai_service import complete, disease_summary
+from backend.dae_live_lookup import lookup_ppw_live_product
 from backend.disease_guidance import (
     get_disease_guidance,
     get_unclassified_visual_guidance,
@@ -45,7 +46,7 @@ from backend.data_mappings import (
     DISTRICT_ALIASES,
     DISTRICT_BN_TO_EN,
 )
-from backend.disease_labels import DISEASE_TRANSLATION
+from backend.disease_labels import DISEASE_TRANSLATION, disease_only_label
 
 
 app = FastAPI(
@@ -313,7 +314,7 @@ def chat(request: ChatRequest) -> dict[str, Any]:
     if not os.getenv("GROQ_API_KEY", "").strip():
         raise HTTPException(
             status_code=503,
-            detail="AI সহকারী চালু করতে backend-এ GROQ_API_KEY যোগ করুন। অন্য সব ফিচার ব্যবহার করা যাবে।",
+            detail="Krittim-S1 সহায়কটি এখন কনফিগার করা নেই। অন্য ফিচার ব্যবহার করা যাবে।",
         )
     messages = [{"role": item.role, "content": item.content} for item in request.messages]
     if request.context:
@@ -324,14 +325,14 @@ def chat(request: ChatRequest) -> dict[str, Any]:
                     "content": f"প্রাসঙ্গিক অ্যাপ তথ্য: {request.context}\n\nপ্রশ্ন/বার্তা: {message['content']}",
                 }
                 break
-    answer, model, error = complete(messages, max_tokens=750)
+    answer, _model, error = complete(messages, max_tokens=750)
     if not answer:
         if error == "invalid_key":
-            raise HTTPException(status_code=503, detail="Groq API key যাচাই করা যায়নি।")
+            raise HTTPException(status_code=503, detail="AI সেবার কনফিগারেশন যাচাই করা যায়নি।")
         if error == "rate_limit":
-            raise HTTPException(status_code=503, detail="Groq-এর অনুরোধসীমা সাময়িকভাবে পূর্ণ। পরে আবার চেষ্টা করুন।")
+            raise HTTPException(status_code=503, detail="AI সেবার অনুরোধসীমা সাময়িকভাবে পূর্ণ। পরে আবার চেষ্টা করুন।")
         raise HTTPException(status_code=502, detail="AI সেবাটি এখন সাড়া দিচ্ছে না। পরে আবার চেষ্টা করুন।")
-    return {"answer": answer, "model": model}
+    return {"answer": answer, "assistant": "Krittim-S1"}
 
 
 _DISEASE_RUNTIME: tuple[Any, Any] | None = None
@@ -388,7 +389,6 @@ def _parse_image_data_url(image_data_url: str) -> bytes:
 
 
 def _display_class(class_label: str) -> tuple[str, str]:
-    display = DISEASE_TRANSLATION.get(class_label, class_label.replace("___", " — ").replace("_", " "))
     crop_key = class_label.split("___", 1)[0]
     crop_names = {
         "Apple": "আপেল", "Blueberry": "ব্লুবেরি", "Cherry_(including_sour)": "চেরি",
@@ -396,7 +396,8 @@ def _display_class(class_label: str) -> tuple[str, str]:
         "Pepper,_bell": "ক্যাপসিকাম", "Potato": "আলু", "Raspberry": "রাস্পবেরি",
         "Soybean": "সয়াবিন", "Squash": "স্কোয়াশ", "Strawberry": "স্ট্রবেরি", "Tomato": "টমেটো",
     }
-    return crop_names.get(crop_key, crop_key.replace("_", " ")), display
+    crop_label = crop_names.get(crop_key, crop_key.replace("_", " "))
+    return crop_label, disease_only_label(class_label, crop_labels=(crop_label,))
 
 
 def _vision_image_data_url(image: Image.Image) -> str:
@@ -421,7 +422,54 @@ def _cause_label_bn(cause_type: str) -> str:
         "nutrient": "সম্ভাব্য পুষ্টিঘাটতি—নিশ্চিত নয়",
         "abiotic": "সম্ভাব্য আবহাওয়া/পরিবেশজনিত",
         "healthy": "স্পষ্ট রোগের লক্ষণ নেই",
-    }.get(cause_type, "কারণ অনিশ্চিত")
+    }.get(cause_type, "ছবি থেকে কারণ নির্ধারণ করা যায়নি")
+
+
+def _visual_disease_label(visual: dict[str, Any]) -> str:
+    class_label = visual.get("plantvillage_class_label")
+    if class_label and class_label.endswith("___healthy") and visual.get("cause_type") != "healthy":
+        class_label = None
+    return disease_only_label(
+        class_label=class_label,
+        disease_label=visual.get("disease_bn") or visual.get("disease_en"),
+        crop_labels=(visual.get("crop_bn"), visual.get("crop_en")),
+    )
+
+
+def _augment_with_live_ppw_guidance(guidance: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
+    """Try the official PPW source only after the curated allow-list misses."""
+    if guidance.get("products"):
+        return guidance
+
+    lookup = lookup_ppw_live_product(visual)
+    status = lookup.get("status")
+    product = lookup.get("product")
+    if status == "matched" and isinstance(product, dict):
+        guidance["category"] = "possible_disease_with_verified_label"
+        guidance["products"] = [product]
+        guidance["product_note"] = (
+            "কিউরেটেড তালিকায় সরাসরি match না থাকায় AI-এর ফসল ও রোগের নাম দিয়ে সরকারি DAE PPW-এর লাইভ public search করা হয়েছে। "
+            "ছবিটি PPW-তে পাঠানো হয়নি; একই official ব্যবহারবিধিতে ফসল–রোগ ও মাত্রা মিললেই নিচের পণ্য দেখানো হয়েছে। "
+            "এটি সক্রিয় নিবন্ধন বা স্থানীয় দোকানে মজুতের নিশ্চয়তা নয়—ব্যবহারের আগে আসল প্যাকেটের বর্তমান লেবেল, PHI ও নিরাপত্তা নির্দেশনা মিলিয়ে নিন।"
+        )
+        checked_on = lookup.get("checked_on")
+        if isinstance(checked_on, str):
+            guidance["source_checked_on"] = checked_on
+        sources = guidance.get("sources", [])
+        if isinstance(sources, list) and not any(source.get("url") == product.get("source_url") for source in sources if isinstance(source, dict)):
+            sources.append({"label": product.get("source_label", "DAE PPW live product record"), "url": product.get("source_url", "")})
+        guidance["sources"] = sources
+    elif status == "no_match":
+        guidance["product_note"] = (
+            "কিউরেটেড DAE তালিকায় এই ফসল–রোগের পণ্য ছিল না। সরকারি PPW live search-এও একই ব্যবহারবিধিতে ফসল, রোগ ও নির্দিষ্ট মাত্রা একসঙ্গে যাচাই করা যায়নি; "
+            "তাই ব্র্যান্ড বা ডোজ অনুমান করে দেওয়া হচ্ছে না। পরে আবার চেষ্টা করুন বা স্থানীয় কৃষি কর্মকর্তার সঙ্গে মিলিয়ে নিন।"
+        )
+    elif status == "unavailable":
+        guidance["product_note"] = (
+            "কিউরেটেড DAE তালিকায় নির্দিষ্ট পণ্য মেলেনি এবং সরকারি PPW live search-এ এখন সংযোগ পাওয়া যায়নি। "
+            "যাচাইহীন ব্র্যান্ড/ডোজ দেওয়া হচ্ছে না; পরে আবার চেষ্টা করুন বা স্থানীয় কৃষি কর্মকর্তার সঙ্গে মিলিয়ে নিন।"
+        )
+    return guidance
 
 
 @app.post("/api/disease")
@@ -486,9 +534,9 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
 
     if not top_predictions and not visual_result:
         if local_model_error == "weights_missing":
-            detail = "কোনো স্থানীয় .pth রোগ-মডেল নেই এবং Groq Qwen vision-ও চালু নয়। backend-এ plant_disease_weights.pth/plant-disease-model-complete.pth বা GROQ_API_KEY যোগ করুন।"
+            detail = "ছবি বিশ্লেষণের জন্য কোনো মডেল এখন চালু নেই। পরে আবার চেষ্টা করুন বা কৃষি কর্মকর্তার সঙ্গে যোগাযোগ করুন।"
         elif vision.get("status") == "not_configured":
-            detail = "Groq Qwen vision চালু নেই এবং স্থানীয় রোগ মডেলটিও ব্যবহার করা যাচ্ছে না। backend-এ GROQ_API_KEY ও/অথবা মডেল ওজন যোগ করুন।"
+            detail = "অনলাইন ছবি-ভিত্তিক AI কনফিগার করা নেই এবং স্থানীয় মডেলটিও ব্যবহার করা যাচ্ছে না। পরে আবার চেষ্টা করুন।"
         else:
             detail = "ছবি বিশ্লেষণের সেবা এখন সাড়া দিচ্ছে না। পরে আবার চেষ্টা করুন।"
         raise HTTPException(status_code=503, detail=detail)
@@ -497,7 +545,7 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
         prediction = top_predictions[0]
     else:
         crop_fallback = visual_result.get("crop_bn") or visual_result.get("crop_en") or "ফসল অনিশ্চিত"
-        disease_fallback = visual_result.get("disease_bn") or visual_result.get("disease_en") or "রোগ অনিশ্চিত"
+        disease_fallback = _visual_disease_label(visual_result) or "লক্ষণ স্পষ্ট নয়—রোগ শনাক্ত করা যায়নি"
         prediction = {
             "class_label": visual_result.get("plantvillage_class_label") or "VISION_ONLY",
             "crop_label": crop_fallback,
@@ -506,32 +554,38 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
         }
 
     if visual_result:
-        if visual_result.get("leaf_status") == "not_leaf":
-            diagnosis_crop = visual_result.get("crop_bn") or visual_result.get("crop_en") or "গাছ শনাক্ত হয়নি"
-            diagnosis_disease = "ছবিতে গাছের পাতা শনাক্ত হয়নি"
-        elif visual_result.get("leaf_status") == "uncertain":
-            diagnosis_crop = visual_result.get("crop_bn") or visual_result.get("crop_en") or "ফসল অনিশ্চিত"
-            diagnosis_disease = visual_result.get("disease_bn") or visual_result.get("disease_en") or "রোগ শনাক্ত অনিশ্চিত"
+        leaf_status = visual_result.get("leaf_status", "uncertain")
+        diagnosis_crop = visual_result.get("crop_bn") or visual_result.get("crop_en") or "ফসল অনিশ্চিত"
+        if leaf_status == "not_leaf":
+            diagnosis_disease = "পাতার ছবি নয়"
+        elif leaf_status == "uncertain" and visual_result.get("cause_type") == "healthy":
+            diagnosis_disease = "ছবি স্পষ্ট নয়—গাছ স্বাভাবিক কি না নিশ্চিত নয়"
+        elif visual_result.get("cause_type") == "healthy":
+            diagnosis_disease = "স্পষ্ট রোগের লক্ষণ নেই"
         else:
-            diagnosis_crop = visual_result.get("crop_bn") or visual_result.get("crop_en") or "ফসল অনিশ্চিত"
-            if visual_result.get("cause_type") == "healthy":
-                diagnosis_disease = "দেখা ছবিতে স্পষ্ট রোগের লক্ষণ নেই"
-            else:
-                diagnosis_disease = visual_result.get("disease_bn") or visual_result.get("disease_en") or "রোগ শনাক্ত অনিশ্চিত"
+            diagnosis_disease = _visual_disease_label(visual_result) or "লক্ষণ স্পষ্ট নয়—রোগ শনাক্ত করা যায়নি"
+        if leaf_status == "not_leaf":
+            diagnosis_cause_label = "পাতার ছবি নয়"
+        elif leaf_status == "uncertain":
+            diagnosis_cause_label = "ছবি/লক্ষণ স্পষ্ট নয়—যাচাই প্রয়োজন"
+        else:
+            diagnosis_cause_label = _cause_label_bn(visual_result.get("cause_type", "unknown"))
         diagnosis = {
-            "source": "groq_qwen_vision",
-            "leaf_status": visual_result.get("leaf_status", "uncertain"),
+            "source": "krittim_vision",
+            "leaf_status": leaf_status,
             "crop_label": diagnosis_crop,
             "disease_label": diagnosis_disease,
             "cause_type": visual_result.get("cause_type", "unknown"),
-            "cause_label_bn": _cause_label_bn(visual_result.get("cause_type", "unknown")),
+            "cause_label_bn": diagnosis_cause_label,
             "visible_signs_bn": visual_result.get("visible_signs_bn", []),
             "nonchemical_actions_bn": visual_result.get("nonchemical_actions_bn", []),
             "confidence_band": visual_result.get("confidence_band", "low"),
         }
         guidance = get_visual_disease_guidance(visual_result)
+        if not guidance["products"]:
+            guidance = _augment_with_live_ppw_guidance(guidance, visual_result)
         scope_warning = (
-            "Qwen-এর ছবি-অনুমান নিশ্চিত রোগনির্ণয় নয়—ফসল/রোগ ভুল হতে পারে। "
+            "Krittim AI Vision-এর ছবি-ভিত্তিক ফল নিশ্চিত রোগনির্ণয় নয়—ভুল হতে পারে। "
             "দৃশ্যমান লক্ষণ ও প্যাকেটের বর্তমান লেবেল মিলিয়ে নিন; DAE পণ্য কেবল নির্দিষ্ট crop–disease record মেললে দেখানো হয়।"
         )
     else:
@@ -541,7 +595,7 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
             "crop_label": prediction["crop_label"],
             "disease_label": prediction["label"],
             "cause_type": "unknown",
-            "cause_label_bn": "কারণ অনিশ্চিত",
+            "cause_label_bn": "স্থানীয় মডেলের অনুমান—কারণ নিশ্চিত নয়",
             "visible_signs_bn": [],
             "nonchemical_actions_bn": [],
             "confidence_band": "low",
@@ -552,19 +606,18 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
             # recommendation without an independent visual crop/disease result.
             guidance = get_unclassified_visual_guidance()
             guidance["product_note"] = (
-                "Qwen Vision পাওয়া যায়নি; স্থানীয় ৩৮-শ্রেণির শ্রেণিবিন্যাস একা ফসল–রোগ নিশ্চিত করার জন্য যথেষ্ট নয়। "
-                "তাই সম্ভাব্য DAE product/rate গোপন রাখা হয়েছে; নতুন ছবি বা স্থানীয় কৃষি কর্মকর্তার মাধ্যমে যাচাই করুন।"
+                "Krittim AI Vision পাওয়া যায়নি; স্থানীয় ৩৮-শ্রেণির শ্রেণিবিন্যাস একা ফসল–রোগ নিশ্চিত করার জন্য যথেষ্ট নয়। "
+                "তাই সম্ভাব্য DAE product/rate দেখানো হচ্ছে না; নতুন ছবি বা স্থানীয় কৃষি কর্মকর্তার মাধ্যমে যাচাই করুন।"
             )
         scope_warning = (
-            "Qwen Vision পাওয়া যায়নি; এটি স্থানীয় ৩৮-শ্রেণির PlantVillage মডেলের fallback অনুমান, calibrated সম্ভাবনা নয়। "
+            "Krittim AI Vision পাওয়া যায়নি; এটি স্থানীয় ৩৮-শ্রেণির PlantVillage মডেলের fallback অনুমান, calibrated সম্ভাবনা নয়। "
             "বাংলাদেশের সব ফসল/রোগ এতে নেই—শুধু স্কোর দেখে চিকিৎসা শুরু করবেন না।"
         )
 
     answer = None
-    model_name = None
     ai_error = None
     if request.include_ai_explanation:
-        answer, model_name, ai_error = disease_summary(
+        answer, _model_name, ai_error = disease_summary(
             diagnosis["crop_label"], diagnosis["disease_label"], prediction["score_percent"],
             top_predictions, request.symptom,
             visual_assessment=visual_result,
@@ -579,17 +632,15 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
         "vision_analysis": {
             "available": bool(visual_result),
             "status": vision.get("status", "provider_unavailable"),
-            "model": vision.get("model"),
         },
         "local_model_available": bool(top_predictions),
-        "image_sent_to_groq": bool(vision.get("image_sent_to_groq")),
+        "image_sent_to_vision_service": bool(vision.get("image_sent_to_groq")),
         "summary": answer,
-        "summary_model": model_name,
         "summary_requested": request.include_ai_explanation,
         "summary_available": answer is not None,
         "summary_error_code": ai_error,
         "model_scope": {
-            "name": "Groq Qwen vision + ResNet9 / PlantVillage fallback",
+            "name": "Krittim AI Vision + ResNet9 / PlantVillage fallback",
             "class_count": 38,
             "all_bangladesh_crops_supported": False,
         },

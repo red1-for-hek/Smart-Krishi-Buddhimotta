@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "স্মার্ট কৃষি বুদ্ধিমত্তা | Smart Krishi Buddhimotta",
-  description: "Technology should empower those who feed nations. বাংলাদেশের কৃষকদের জন্য আবহাওয়া, ফসল পরিচর্যা ও AI কৃষি সহায়তা।",
+  description: "BNMPC IT Club-এর স্মার্ট কৃষি বুদ্ধিমত্তা: বাংলাদেশের কৃষকদের জন্য আবহাওয়া, ফসল পরিচর্যা ও AI কৃষি সহায়তা।",
   icons: {
     icon: "/brand-logo.png",
     shortcut: "/brand-logo.png",

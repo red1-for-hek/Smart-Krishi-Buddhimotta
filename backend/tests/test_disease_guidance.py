@@ -28,11 +28,93 @@ class DiseaseGuidanceTests(unittest.TestCase):
     def test_verified_companion_record_is_narrowly_mapped_to_tomato_early_blight(self) -> None:
         guidance = get_disease_guidance("Tomato___Early_blight")
         product = guidance["products"][0]
+        self.assertEqual([item["registration_no"] for item in guidance["products"]], ["AP-664", "AP-2491"])
         self.assertEqual(product["registration_no"], "AP-664")
         self.assertEqual(product["rate"], "২ গ্রাম / ১ লিটার পানি")
+        alternate = guidance["products"][1]
+        self.assertEqual(alternate["name"], "M-Zeb 80 WP")
+        self.assertEqual(alternate["rate"], "২ গ্রাম / ১ লিটার পানি")
+        self.assertEqual(alternate["source_url"], "https://ppw.krishi.gov.bd/pesticide-details/2021")
+        self.assertIn("একসাথে", guidance["product_note"])
         self.assertIn("টমেটো", product["label_scope"])
         self.assertIn("application_method", product)
         self.assertEqual(product["source_url"], "https://ppw.krishi.gov.bd/pesticide-details/13610")
+        self.assertNotIn("টমেটো", guidance["reason"])
+        self.assertIn("আর্লি ব্লাইট", guidance["reason"])
+
+    def test_rice_blast_matches_seltima_record_and_exact_rate(self) -> None:
+        guidance = get_disease_guidance("Rice___Blast")
+        self.assertEqual([item["registration_no"] for item in guidance["products"]], ["AP-5112"])
+        product = guidance["products"][0]
+        self.assertEqual(product["name"], "Seltima")
+        self.assertEqual(product["rate"], "২ মিলি/লিটার পানি; ১০০০ মিলি/হেক্টর")
+        self.assertEqual(product["label_scope"], "ধান — Blast")
+        self.assertEqual(product["source_url"], "https://ppw.krishi.gov.bd/pesticide-details/3563")
+
+    def test_visual_rice_blast_automatically_gets_verified_product_and_dose(self) -> None:
+        guidance = get_visual_disease_guidance({
+            "leaf_status": "leaf",
+            "crop_en": "rice",
+            "crop_bn": "ধান",
+            "disease_en": "rice blast",
+            "disease_bn": "ধানের ব্লাস্ট",
+            "cause_type": "fungal",
+            "confidence_band": "medium",
+            "plantvillage_class_label": None,
+        })
+        product = guidance["products"][0]
+        self.assertEqual(product["registration_no"], "AP-5112")
+        self.assertEqual(product["rate"], "২ মিলি/লিটার পানি; ১০০০ মিলি/হেক্টর")
+        self.assertEqual(product["label_scope"], "ধান — Blast")
+
+    def test_visual_rice_sheath_blight_gets_seltima_record(self) -> None:
+        guidance = get_visual_disease_guidance({
+            "leaf_status": "leaf",
+            "crop_en": "rice",
+            "crop_bn": "ধান",
+            "disease_en": "sheath blight",
+            "disease_bn": "সিথ ব্লাইট",
+            "cause_type": "fungal",
+            "confidence_band": "high",
+            "plantvillage_class_label": None,
+        })
+        product = guidance["products"][0]
+        self.assertEqual(product["registration_no"], "AP-5112")
+        self.assertEqual(product["name"], "Seltima")
+        self.assertEqual(product["rate"], "২ মিলি/লিটার পানি; ১০০০ মিলি/হেক্টর")
+        self.assertEqual(product["label_scope"], "ধান — Sheath blight")
+        self.assertEqual(product["source_url"], "https://ppw.krishi.gov.bd/pesticide-details/3563")
+
+    def test_nearby_crop_or_disease_does_not_match_rice_records(self) -> None:
+        cases = [
+            {"leaf_status": "leaf", "crop_en": "rice", "disease_en": "brown spot", "cause_type": "fungal"},
+            {"leaf_status": "leaf", "crop_en": "wheat", "disease_en": "blast", "cause_type": "fungal"},
+            {"leaf_status": "leaf", "crop_en": "tomato", "disease_en": "blast", "cause_type": "fungal"},
+        ]
+        for visual in cases:
+            with self.subTest(visual=visual):
+                self.assertEqual(get_visual_disease_guidance(visual)["products"], [])
+
+    def test_missing_confidence_withholds_otherwise_matching_product(self) -> None:
+        guidance = get_visual_disease_guidance({
+            "leaf_status": "leaf",
+            "crop_en": "tomato",
+            "disease_en": "early blight",
+            "cause_type": "fungal",
+        })
+        self.assertEqual(guidance["products"], [])
+        self.assertIn("অনুপস্থিত", guidance["product_note"])
+
+    def test_non_fungal_cause_conflicts_withhold_fungicide_records(self) -> None:
+        guidance = get_visual_disease_guidance({
+            "leaf_status": "leaf",
+            "crop_en": "tomato",
+            "disease_en": "early blight",
+            "cause_type": "bacterial",
+            "confidence_band": "medium",
+        })
+        self.assertEqual(guidance["products"], [])
+        self.assertIn("কারণ-ধরন", guidance["product_note"])
 
     def test_visual_cucurbit_pair_uses_the_exact_recorded_rate(self) -> None:
         guidance = get_visual_disease_guidance({
@@ -42,6 +124,7 @@ class DiseaseGuidanceTests(unittest.TestCase):
             "disease_en": "powdery mildew",
             "disease_bn": "পাউডারি মিলডিউ",
             "cause_type": "fungal",
+            "confidence_band": "medium",
         })
         product = guidance["products"][0]
         self.assertEqual(product["registration_no"], "AP-1770")
@@ -89,6 +172,7 @@ class DiseaseGuidanceTests(unittest.TestCase):
             "disease_en": "Anthracnose",
             "disease_bn": "অ্যানথ্রাকনোজ",
             "cause_type": "fungal",
+            "confidence_band": "medium",
         }
         guidance = get_visual_disease_guidance(visual)
         self.assertEqual([item["registration_no"] for item in guidance["products"]], ["AP-353"])
@@ -102,6 +186,7 @@ class DiseaseGuidanceTests(unittest.TestCase):
             "disease_en": "Bacterial spot",
             "disease_bn": "ব্যাকটেরিয়াল দাগ",
             "cause_type": "bacterial",
+            "confidence_band": "medium",
         }
         guidance = get_visual_disease_guidance(visual)
         self.assertEqual(guidance["products"], [])
