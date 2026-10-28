@@ -32,7 +32,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from backend.ai_service import complete, disease_summary
+from backend.ai_service import complete, disease_summary, pesticide_registry_candidate_terms
 from backend.dae_live_lookup import lookup_ppw_live_product
 from backend.disease_guidance import (
     get_disease_guidance,
@@ -437,21 +437,45 @@ def _visual_disease_label(visual: dict[str, Any]) -> str:
 
 
 def _augment_with_live_ppw_guidance(guidance: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
-    """Try the official PPW source only after the curated allow-list misses."""
+    """Search official DAE PPW, then use the text model only to expand registry queries."""
     if guidance.get("products"):
         return guidance
 
     lookup = lookup_ppw_live_product(visual)
+    candidate_search_attempted = False
+    if lookup.get("status") == "no_match":
+        candidate_terms = pesticide_registry_candidate_terms(
+            visual.get("crop_en"), visual.get("crop_bn"),
+            visual.get("disease_en"), visual.get("disease_bn"),
+        )
+        if candidate_terms:
+            candidate_search_attempted = True
+            candidate_lookup = lookup_ppw_live_product(visual, extra_search_terms=candidate_terms)
+            if candidate_lookup.get("status") in {"matched", "unavailable"}:
+                lookup = candidate_lookup
+
     status = lookup.get("status")
     product = lookup.get("product")
     if status == "matched" and isinstance(product, dict):
         guidance["category"] = "possible_disease_with_verified_label"
         guidance["products"] = [product]
-        guidance["product_note"] = (
-            "কিউরেটেড তালিকায় সরাসরি match না থাকায় AI-এর ফসল ও রোগের নাম দিয়ে সরকারি DAE PPW-এর লাইভ public search করা হয়েছে। "
-            "ছবিটি PPW-তে পাঠানো হয়নি; একই official ব্যবহারবিধিতে ফসল–রোগ ও মাত্রা মিললেই নিচের পণ্য দেখানো হয়েছে। "
-            "এটি সক্রিয় নিবন্ধন বা স্থানীয় দোকানে মজুতের নিশ্চয়তা নয়—ব্যবহারের আগে আসল প্যাকেটের বর্তমান লেবেল, PHI ও নিরাপত্তা নির্দেশনা মিলিয়ে নিন।"
-        )
+        if visual.get("confidence_band") not in {"medium", "high"}:
+            guidance["category"] = "possible_disease_with_verified_label_candidate"
+            guidance["product_note"] = (
+                "ছবিভিত্তিক AI শনাক্তকরণ কম নিশ্চিত/অনুপস্থিত—এটি রোগনির্ণয় নয়। নিচের পণ্য ও মাত্রা DAE PPW-র "
+                "একই ফসল–রোগের official ব্যবহারবিধি থেকে দেখানো শর্তসাপেক্ষ তথ্য; কেবল রোগটি বাস্তবে নিশ্চিত হলে বিবেচনা করুন। "
+                "প্রয়োগের আগে আসল প্যাকেটের বর্তমান লেবেল, PHI/PPE এবং উপজেলা কৃষি কর্মকর্তার পরামর্শ মিলিয়ে নিন।"
+            )
+        else:
+            guidance["product_note"] = (
+                "কিউরেটেড তালিকায় সরাসরি match না থাকায় AI-এর ফসল ও রোগের নাম দিয়ে সরকারি DAE PPW live search করা হয়েছে। "
+                "ছবিটি PPW-তে পাঠানো হয়নি; একই official ব্যবহারবিধিতে ফসল–রোগ ও মাত্রা মিললেই পণ্যটি দেখানো হয়েছে। "
+                "এটি সক্রিয় নিবন্ধন বা স্থানীয় দোকানে মজুতের নিশ্চয়তা নয়—বর্তমান প্যাকেটের লেবেল ও PHI/PPE মিলিয়ে নিন।"
+            )
+        if lookup.get("ai_candidate_search"):
+            guidance["product_note"] += (
+                " কনফিগার করা text AI শুধু PPW-তে খোঁজার candidate term দিয়েছে; পণ্যের নাম/মাত্রা DAE detail page-এ যাচাই করেই দেখানো হয়েছে।"
+            )
         checked_on = lookup.get("checked_on")
         if isinstance(checked_on, str):
             guidance["source_checked_on"] = checked_on
@@ -460,9 +484,14 @@ def _augment_with_live_ppw_guidance(guidance: dict[str, Any], visual: dict[str, 
             sources.append({"label": product.get("source_label", "DAE PPW live product record"), "url": product.get("source_url", "")})
         guidance["sources"] = sources
     elif status == "no_match":
+        extra_note = (
+            " text AI-সহায়ক candidate-name search-সহ সরকারি PPW-তে খোঁজা হয়েছে; তবু একই official ব্যবহারবিধিতে ফসল, রোগ ও নির্দিষ্ট মাত্রা একসঙ্গে মেলেনি।"
+            if candidate_search_attempted else
+            " সরকারি PPW live search-এও একই ব্যবহারবিধিতে ফসল, রোগ ও নির্দিষ্ট মাত্রা একসঙ্গে যাচাই করা যায়নি।"
+        )
         guidance["product_note"] = (
-            "কিউরেটেড DAE তালিকায় এই ফসল–রোগের পণ্য ছিল না। সরকারি PPW live search-এও একই ব্যবহারবিধিতে ফসল, রোগ ও নির্দিষ্ট মাত্রা একসঙ্গে যাচাই করা যায়নি; "
-            "তাই ব্র্যান্ড বা ডোজ অনুমান করে দেওয়া হচ্ছে না। পরে আবার চেষ্টা করুন বা স্থানীয় কৃষি কর্মকর্তার সঙ্গে মিলিয়ে নিন।"
+            "কিউরেটেড DAE তালিকায় এই ফসল–রোগের পণ্য ছিল না।" + extra_note +
+            " তাই যাচাইহীন ব্র্যান্ড বা ডোজ দেখানো হচ্ছে না; পরে আবার চেষ্টা করুন বা স্থানীয় কৃষি কর্মকর্তার সঙ্গে মিলিয়ে নিন।"
         )
     elif status == "unavailable":
         guidance["product_note"] = (

@@ -23,11 +23,11 @@ import requests
 PPW_ORIGIN = "https://ppw.krishi.gov.bd"
 PPW_SEARCH_URL = f"{PPW_ORIGIN}/pesticide-search"
 
-# Keep live traffic bounded: at most two candidate searches and eight detail
+# Keep live traffic bounded: at most four keyword searches and eight detail
 # pages for a single diagnosis. Responses (including misses) are short-cached.
 _SEARCH_TIMEOUT = (1.5, 3.0)
 _DETAIL_TIMEOUT = (1.5, 3.0)
-_MAX_SEARCH_TERMS = 2
+_MAX_SEARCH_TERMS = 4
 _MAX_CANDIDATES = 8
 _MAX_DETAIL_WORKERS = 4
 _CACHE_TTL_SECONDS = 300
@@ -232,7 +232,7 @@ def _class_label_matches_visual(visual: dict[str, Any]) -> bool:
 def _is_eligible(visual: dict[str, Any]) -> bool:
     if visual.get("leaf_status") != "leaf":
         return False
-    if visual.get("confidence_band") not in {"medium", "high"}:
+    if visual.get("confidence_band") not in {"low", "medium", "high"}:
         return False
     if visual.get("cause_type", "unknown") not in {"fungal", "bacterial", "insect_or_mite", "unknown"}:
         return False
@@ -243,10 +243,10 @@ def _is_eligible(visual: dict[str, Any]) -> bool:
     return _class_label_matches_visual(visual)
 
 
-def _search_terms(visual: dict[str, Any]) -> list[str]:
+def _search_terms(visual: dict[str, Any], extra_search_terms: tuple[str, ...] | list[str] = ()) -> list[str]:
     disease_en = str(visual.get("disease_en") or "").strip()
     disease_bn = str(visual.get("disease_bn") or "").strip()
-    disease_aliases, canonical = _disease_aliases(disease_en, disease_bn)
+    _disease_aliases_found, canonical = _disease_aliases(disease_en, disease_bn)
     terms: list[str] = []
     if canonical:
         terms.append(canonical)
@@ -263,7 +263,14 @@ def _search_terms(visual: dict[str, Any]) -> list[str]:
             words = normalized.split()
             if len(words) > 1 and len(words[-1]) >= 4:
                 terms.append(words[-1])
-    if len(terms) < _MAX_SEARCH_TERMS:
+
+    safe_extra_terms = [
+        re.sub(r"\s+", " ", str(term or "")).strip()[:60]
+        for term in extra_search_terms[:2]
+        if isinstance(term, str) and len(_normalize(term)) >= 3
+    ]
+    terms.extend(safe_extra_terms)
+    if len(terms) < _MAX_SEARCH_TERMS and not safe_extra_terms:
         crop_term = _normalize(visual.get("crop_en") or visual.get("crop_bn"))
         if crop_term and len(crop_term) >= 3:
             terms.append(crop_term)
@@ -433,13 +440,14 @@ def _fetch_detail(candidate: dict[str, str]) -> dict[str, str] | None:
     return {**candidate, "use_text": _extract_use_section(html_body), "source_url": detail_url}
 
 
-def _cache_key(visual: dict[str, Any]) -> str:
-    pieces = (
+def _cache_key(visual: dict[str, Any], extra_search_terms: tuple[str, ...] | list[str] = ()) -> str:
+    pieces = [
         _normalize(visual.get("crop_en")),
         _normalize(visual.get("crop_bn")),
         _normalize(visual.get("disease_en")),
         _normalize(visual.get("disease_bn")),
-    )
+    ]
+    pieces.extend(_normalize(term) for term in extra_search_terms[:2])
     return "|".join(pieces)
 
 
@@ -483,7 +491,10 @@ def _product_from_detail(detail: dict[str, str], visual: dict[str, Any], rate: s
     }
 
 
-def _search_live(visual: dict[str, Any]) -> dict[str, Any]:
+def _search_live(
+    visual: dict[str, Any],
+    extra_search_terms: tuple[str, ...] | list[str] = (),
+) -> dict[str, Any]:
     crop_aliases = _crop_aliases(visual.get("crop_en"), visual.get("crop_bn"))
     disease_aliases, _canonical = _disease_aliases(visual.get("disease_en"), visual.get("disease_bn"))
     if not crop_aliases or not disease_aliases:
@@ -492,7 +503,7 @@ def _search_live(visual: dict[str, Any]) -> dict[str, Any]:
     candidates: list[dict[str, str]] = []
     seen_ids: set[str] = set()
     had_search_response = False
-    for keyword in _search_terms(visual):
+    for keyword in _search_terms(visual, extra_search_terms):
         try:
             records = _search_candidates(keyword)
             had_search_response = True
@@ -537,22 +548,32 @@ def _search_live(visual: dict[str, Any]) -> dict[str, Any]:
     return {"status": "no_match", "product": None}
 
 
-def lookup_ppw_live_product(visual: dict[str, Any]) -> dict[str, Any]:
+def lookup_ppw_live_product(
+    visual: dict[str, Any],
+    extra_search_terms: tuple[str, ...] | list[str] = (),
+) -> dict[str, Any]:
     """Best-effort exact-use lookup; failure never creates a guessed product."""
     if os.getenv("DAE_LIVE_LOOKUP_ENABLED", "true").strip().casefold() in {"0", "false", "no", "off"}:
         return {"status": "disabled", "product": None}
     if not _is_eligible(visual):
         return {"status": "skipped", "product": None}
 
-    key = _cache_key(visual)
+    safe_terms = tuple(
+        re.sub(r"[^A-Za-z0-9\u0980-\u09FF .()_-]+", " ", term).strip()[:60]
+        for term in extra_search_terms[:2]
+        if isinstance(term, str) and len(_normalize(term)) >= 3
+    )
+    key = _cache_key(visual, safe_terms)
     cached = _cache_get(key)
     if cached is not None:
         return cached
 
     try:
-        result = _search_live(visual)
+        result = _search_live(visual, safe_terms)
     except Exception:
         # Keep provider/HTML errors from disrupting the disease endpoint.
         result = {"status": "unavailable", "product": None}
+    if safe_terms and result.get("status") == "matched":
+        result["ai_candidate_search"] = True
     _cache_put(key, result)
     return result
