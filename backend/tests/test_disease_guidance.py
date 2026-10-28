@@ -95,15 +95,16 @@ class DiseaseGuidanceTests(unittest.TestCase):
             with self.subTest(visual=visual):
                 self.assertEqual(get_visual_disease_guidance(visual)["products"], [])
 
-    def test_missing_confidence_withholds_otherwise_matching_product(self) -> None:
+    def test_missing_confidence_shows_only_a_conditional_exact_label_candidate(self) -> None:
         guidance = get_visual_disease_guidance({
             "leaf_status": "leaf",
             "crop_en": "tomato",
             "disease_en": "early blight",
             "cause_type": "fungal",
         })
-        self.assertEqual(guidance["products"], [])
-        self.assertIn("অনুপস্থিত", guidance["product_note"])
+        self.assertEqual([item["registration_no"] for item in guidance["products"]], ["AP-664", "AP-2491"])
+        self.assertEqual(guidance["category"], "possible_disease_with_verified_label_candidate")
+        self.assertIn("রোগনির্ণয় নয়", guidance["product_note"])
 
     def test_non_fungal_cause_conflicts_withhold_fungicide_records(self) -> None:
         guidance = get_visual_disease_guidance({
@@ -152,17 +153,21 @@ class DiseaseGuidanceTests(unittest.TestCase):
         self.assertEqual(guidance["products"], [])
         self.assertIn("মেলেনি", guidance["product_note"])
 
-    def test_low_confidence_visual_pair_withholds_product_even_if_a_dae_record_exists(self) -> None:
+    def test_low_confidence_rice_blast_shows_conditional_seltima_label_rate(self) -> None:
         guidance = get_visual_disease_guidance({
             "leaf_status": "leaf",
-            "crop_en": "tomato",
-            "crop_bn": "টমেটো",
-            "disease_en": "early blight",
+            "crop_en": "rice",
+            "crop_bn": "ধান",
+            "disease_en": "rice blast",
+            "disease_bn": "ধানের ব্লাস্ট",
             "cause_type": "fungal",
             "confidence_band": "low",
         })
-        self.assertEqual(guidance["products"], [])
-        self.assertIn("কম নিশ্চিত", guidance["product_note"])
+        product = guidance["products"][0]
+        self.assertEqual(product["registration_no"], "AP-5112")
+        self.assertEqual(product["rate"], "২ মিলি/লিটার পানি; ১০০০ মিলি/হেক্টর")
+        self.assertEqual(guidance["category"], "possible_disease_with_verified_label_candidate")
+        self.assertIn("কেবল রোগটি বাস্তবে নিশ্চিত হলে", guidance["product_note"])
 
     def test_visual_exact_pair_can_reach_verified_use_outside_plantvillage_classes(self) -> None:
         visual = {

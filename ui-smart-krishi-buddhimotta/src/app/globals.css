@@ -187,6 +187,7 @@ h2 { font-size:20px; line-height:1.38; letter-spacing:-.45px; margin-bottom:0; }
 .quick-medicine .quick-product-name { color:#22563c; font-size:14px; }
 .quick-medicine .small-caveat { color:#758279; font-size:10px; }
 .quick-medicine.verified-medicine { border-color:#d3e8d8; background:#f5fbf5; }
+.quick-medicine.conditional-medicine { border-color:#efcf94; background:#fff8e9; }
 .quick-medicine.no-product-match { border-color:#eee4d2; background:#fffaf1; }
 .advanced-result-details { overflow:hidden; }
 .advanced-result-details > summary { padding:15px 19px; color:#496b56; font-size:12px; font-weight:700; cursor:pointer; list-style:none; }

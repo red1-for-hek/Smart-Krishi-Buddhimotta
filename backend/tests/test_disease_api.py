@@ -136,6 +136,42 @@ class DiseaseApiTests(unittest.TestCase):
         self.assertEqual(result["guidance"]["products"][0]["registration_no"], "AP-5112")
         self.assertEqual(result["guidance"]["products"][0]["rate"], "২ মিলি/লিটার পানি; ১০০০ মিলি/হেক্টর")
 
+    def test_low_confidence_rice_blast_still_shows_conditional_official_use_candidate(self) -> None:
+        visual = {
+            "leaf_status": "leaf",
+            "crop_en": "rice",
+            "crop_bn": "ধান",
+            "disease_en": "rice blast",
+            "disease_bn": "ধানের ব্লাস্ট",
+            "cause_type": "fungal",
+            "pathogen_en": None,
+            "visible_signs_bn": [],
+            "nonchemical_actions_bn": [],
+            "confidence_band": "low",
+            "plantvillage_class_label": None,
+        }
+        vision_response = {
+            "available": True,
+            "status": "ok",
+            "model": "qwen/qwen3.8-27b",
+            "result": visual,
+            "image_sent_to_groq": True,
+        }
+        fake_module = self._fake_model_module()
+        with patch.dict(sys.modules, {"disease_model": fake_module}), patch.object(
+            main, "_load_disease_model", side_effect=FileNotFoundError()
+        ), patch.object(main, "analyze_leaf_image", return_value=vision_response), patch.object(
+            main, "lookup_ppw_live_product"
+        ) as live_lookup:
+            result = main.disease(DiseaseRequest(image_data_url=_image_data_url()))
+
+        live_lookup.assert_not_called()
+        self.assertEqual(result["diagnosis"]["confidence_band"], "low")
+        self.assertEqual(result["guidance"]["category"], "possible_disease_with_verified_label_candidate")
+        self.assertEqual(result["guidance"]["products"][0]["registration_no"], "AP-5112")
+        self.assertEqual(result["guidance"]["products"][0]["rate"], "২ মিলি/লিটার পানি; ১০০০ মিলি/হেক্টর")
+        self.assertIn("রোগনির্ণয় নয়", result["guidance"]["product_note"])
+
     def test_missing_curated_match_uses_live_ppw_result_without_sending_photo_to_ppw(self) -> None:
         visual = {
             "leaf_status": "leaf",
@@ -182,6 +218,44 @@ class DiseaseApiTests(unittest.TestCase):
         self.assertIn("ছবিটি PPW-তে পাঠানো হয়নি", result["guidance"]["product_note"])
         self.assertIn(live_product["source_url"], [source["url"] for source in result["guidance"]["sources"]])
 
+    def test_default_text_model_candidate_is_verified_before_becoming_a_product(self) -> None:
+        visual = {
+            "leaf_status": "leaf",
+            "crop_en": "rice",
+            "crop_bn": "ধান",
+            "disease_en": "rice blast",
+            "disease_bn": "ধানের ব্লাস্ট",
+            "cause_type": "fungal",
+            "confidence_band": "medium",
+            "plantvillage_class_label": None,
+        }
+        product = {
+            "name": "Noblast 38SC",
+            "registration_no": "AP-5797",
+            "active_ingredients": "Active ingredient",
+            "label_scope": "ধান — ধানের ব্লাস্ট",
+            "rate": "প্রতি লিটার পানিতে 1 মিলি",
+            "application_method": "DAE detail page verified; current label applies.",
+            "directions": ["Exact official use matched."],
+            "source_label": "DAE PPW live product record — Noblast 38SC",
+            "source_url": "https://ppw.krishi.gov.bd/pesticide-details/13821",
+        }
+        with patch.object(
+            main,
+            "lookup_ppw_live_product",
+            side_effect=[{"status": "no_match", "product": None}, {"status": "matched", "product": product, "checked_on": "2026-10-28", "ai_candidate_search": True}],
+        ) as ppw_search, patch.object(
+            main, "pesticide_registry_candidate_terms", return_value=["Noblast 38SC"]
+        ) as candidate_model:
+            guidance = main._augment_with_live_ppw_guidance(main.get_unclassified_visual_guidance(), visual)
+
+        candidate_model.assert_called_once_with("rice", "ধান", "rice blast", "ধানের ব্লাস্ট")
+        self.assertEqual(ppw_search.call_args_list[0].args, (visual,))
+        self.assertEqual(ppw_search.call_args_list[1].kwargs, {"extra_search_terms": ["Noblast 38SC"]})
+        self.assertEqual(guidance["products"][0]["registration_no"], "AP-5797")
+        self.assertEqual(guidance["products"][0]["rate"], "প্রতি লিটার পানিতে 1 মিলি")
+        self.assertIn("DAE detail page-এ যাচাই", guidance["product_note"])
+
     def test_unverified_live_search_results_never_create_a_product_recommendation(self) -> None:
         visual = {
             "leaf_status": "leaf",
@@ -199,7 +273,7 @@ class DiseaseApiTests(unittest.TestCase):
         ):
             with self.subTest(status=status), patch.object(
                 main, "lookup_ppw_live_product", return_value={"status": status, "product": None}
-            ):
+            ), patch.object(main, "pesticide_registry_candidate_terms", return_value=[]):
                 guidance = main._augment_with_live_ppw_guidance(main.get_unclassified_visual_guidance(), visual)
             self.assertEqual(guidance["products"], [])
             self.assertIn(expected_copy, guidance["product_note"])
@@ -265,7 +339,7 @@ class DiseaseApiTests(unittest.TestCase):
             main, "_load_disease_model", side_effect=FileNotFoundError()
         ), patch.object(main, "analyze_leaf_image", return_value=vision_response), patch.object(
             main, "lookup_ppw_live_product", return_value={"status": "no_match", "product": None}
-        ) as ppw_search:
+        ) as ppw_search, patch.object(main, "pesticide_registry_candidate_terms", return_value=[]):
             result = main.disease(DiseaseRequest(image_data_url=_image_data_url()))
 
         ppw_search.assert_called_once_with(visual)

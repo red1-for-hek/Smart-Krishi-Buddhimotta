@@ -114,9 +114,8 @@ class DaeLiveLookupTests(unittest.TestCase):
         request.assert_not_called()
         self.assertEqual(result["status"], "skipped")
 
-    def test_low_confidence_viral_and_uncertain_results_do_not_trigger_search(self) -> None:
+    def test_viral_nutrient_and_uncertain_results_do_not_trigger_search(self) -> None:
         cases = [
-            _visual(confidence_band="low"),
             _visual(cause_type="viral"),
             _visual(cause_type="nutrient"),
             _visual(leaf_status="uncertain"),
@@ -125,6 +124,23 @@ class DaeLiveLookupTests(unittest.TestCase):
             for visual in cases:
                 self.assertEqual(dae_live_lookup.lookup_ppw_live_product(visual)["status"], "skipped")
         request.assert_not_called()
+
+    def test_low_confidence_exact_pair_can_return_only_an_officially_verified_record(self) -> None:
+        search_url = dae_live_lookup.PPW_SEARCH_URL
+        detail_url = f"{dae_live_lookup.PPW_ORIGIN}/pesticide-details/13821"
+
+        def fake_get(url, **kwargs):
+            if url == search_url:
+                keyword = kwargs["params"]["ajax_keyword"]
+                return _FakeResponse(url=f"{search_url}?ajax_keyword={keyword}", payload=_search_payload() if keyword == "blast" else {"data": []})
+            if url == detail_url:
+                return _FakeResponse(url=detail_url, text=_noblast_detail_html())
+            raise AssertionError(f"Unexpected PPW URL: {url}")
+
+        with patch.object(dae_live_lookup.requests, "get", side_effect=fake_get):
+            result = dae_live_lookup.lookup_ppw_live_product(_visual(confidence_band="low"))
+        self.assertEqual(result["status"], "matched")
+        self.assertEqual(result["product"]["registration_no"], "AP-5797")
 
     def test_exact_bacterial_use_can_match_the_same_official_verification_gate(self) -> None:
         visual = _visual(
@@ -153,6 +169,33 @@ class DaeLiveLookupTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "matched")
         self.assertEqual(result["product"]["rate"], "প্রতি লিটার পানিতে 1 মিলি")
+
+    def test_ai_brand_hint_is_only_used_as_a_ppw_search_query(self) -> None:
+        search_url = dae_live_lookup.PPW_SEARCH_URL
+        detail_url = f"{dae_live_lookup.PPW_ORIGIN}/pesticide-details/13821"
+
+        def fake_get(url, **kwargs):
+            if url == search_url:
+                keyword = kwargs["params"]["ajax_keyword"]
+                payload = _search_payload() if keyword == "Noblast 38SC" else {"data": []}
+                return _FakeResponse(url=f"{search_url}?ajax_keyword={keyword}", payload=payload)
+            if url == detail_url:
+                return _FakeResponse(url=detail_url, text=_noblast_detail_html())
+            raise AssertionError(f"Unexpected PPW URL: {url}")
+
+        with patch.object(dae_live_lookup.requests, "get", side_effect=fake_get):
+            result = dae_live_lookup.lookup_ppw_live_product(
+                _visual(), extra_search_terms=["Noblast 38SC", "unverified guess"]
+            )
+
+        self.assertEqual(result["status"], "matched")
+        self.assertEqual(result["product"]["registration_no"], "AP-5797")
+        self.assertTrue(result["ai_candidate_search"])
+        self.assertIsNone(dae_live_lookup._find_exact_rate(
+            "ধানের Noblast 38SC brand only; 1 ml/L",
+            dae_live_lookup._crop_aliases("rice", "ধান"),
+            dae_live_lookup._disease_aliases("rice blast", "ধানের ব্লাস্ট")[0],
+        ))
 
     def test_detail_registration_must_match_search_result(self) -> None:
         search_url = dae_live_lookup.PPW_SEARCH_URL

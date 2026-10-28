@@ -34,6 +34,29 @@ class AIServiceTests(unittest.TestCase):
                 ],
             )
 
+    def test_registry_product_names_are_only_unverified_search_terms(self) -> None:
+        success = Mock(status_code=200)
+        success.json.return_value = {
+            "choices": [{"message": {"content": '{"candidate_terms":["Noblast 38SC", "Seltima", "Noblast 38SC"]}'}}]
+        }
+        with patch.dict(os.environ, {"GROQ_API_KEY": "server-secret"}, clear=True), patch.object(
+            ai_service.requests, "post", return_value=success
+        ) as post:
+            terms = ai_service.pesticide_registry_candidate_terms("rice", "ধান", "rice blast", "ধানের ব্লাস্ট")
+
+        self.assertEqual(terms, ["Noblast 38SC", "Seltima"])
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["model"], "openai/gpt-oss-20b")
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
+        self.assertNotIn("image_url", repr(payload))
+        self.assertNotIn("server-secret", repr(payload))
+
+    def test_registry_candidates_are_disabled_without_server_key(self) -> None:
+        with patch.dict(os.environ, {}, clear=True), patch.object(ai_service.requests, "post") as post:
+            terms = ai_service.pesticide_registry_candidate_terms("rice", "ধান", "blast", "ব্লাস্ট")
+        self.assertEqual(terms, [])
+        post.assert_not_called()
+
     def test_completion_falls_back_without_a_model_list_request(self) -> None:
         unavailable = Mock(status_code=404)
         unavailable.json.return_value = {"error": {"code": "model_not_found"}}

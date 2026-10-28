@@ -666,8 +666,8 @@ function DiseaseAssistant({
           <div className="diagnosis-detail-card"><h3><span className="detail-index">৩</span>পানি</h3><p>{result.guidance.watering.care}</p><p className="small-caveat">{result.guidance.watering.amount_note}</p></div>
         </div>
 
-        <div className={`quick-medicine ${result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? "verified-medicine" : "no-product-match"}`}>
-          <h3><span className="detail-index">৪</span>{result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? "যাচাইকৃত DAE পণ্য-রেকর্ড" : "ওষুধ / সার"}</h3>
+        <div className={`quick-medicine ${result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? result.guidance.category === "possible_disease_with_verified_label_candidate" ? "conditional-medicine" : "verified-medicine" : "no-product-match"}`}>
+          <h3><span className="detail-index">৪</span>{result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? result.guidance.category === "possible_disease_with_verified_label_candidate" ? "শর্তসাপেক্ষ DAE লেবেল-তথ্য" : "যাচাইকৃত DAE পণ্য-রেকর্ড" : "ওষুধ / সার"}</h3>
           {result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? <>
             {(() => { const product = result.guidance.products[0]; return <>
               <p className="quick-product-name"><strong>{product.name}</strong> · AP-{product.registration_no.replace(/^AP-/, "")}</p>

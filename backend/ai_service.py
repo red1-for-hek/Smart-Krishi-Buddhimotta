@@ -6,7 +6,9 @@ validated vision result plus any symptom text, never image pixels.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 from typing import Any
 
 import requests
@@ -133,6 +135,105 @@ def complete(messages: list[dict[str, str]], max_tokens: int = 700) -> tuple[str
         last_error = "empty_reply"
 
     return None, None, last_error
+
+
+def pesticide_registry_candidate_terms(
+    crop_en: str | None,
+    crop_bn: str | None,
+    disease_en: str | None,
+    disease_bn: str | None,
+) -> list[str]:
+    """Return untrusted brand-name search hints for DAE verification only.
+
+    These terms are never recommendations. The caller must find a matching
+    AP registration and exact crop/disease/rate on an official PPW detail page
+    before exposing any product or dose to the farmer.
+    """
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        return []
+
+    def clean_context(value: str | None) -> str:
+        return re.sub(r"[^A-Za-z0-9\u0980-\u09FF .()_-]+", " ", str(value or ""))[:80].strip()
+
+    crop = clean_context(crop_en) or clean_context(crop_bn)
+    disease = clean_context(disease_en) or clean_context(disease_bn)
+    if not crop or not disease:
+        return []
+
+    system_message = (
+        "You are an internal search-term helper for the Bangladesh DAE PPW pesticide registry, not a farmer-facing advisor. "
+        "Return only JSON with key candidate_terms, a list of at most three pesticide brand or active-ingredient search terms "
+        "that may be relevant to the exact crop and disease. Do not give rates, instructions, fertilizer, or advice. "
+        "These are unverified query hints only; the application will discard every term unless DAE PPW independently verifies "
+        "the same crop, disease, registration, and dose. If unsure, return an empty list. Never invent a certainty claim."
+    )
+    user_message = (
+        f"Crop: {crop}; disease/pest: {disease}. Suggest only likely Bangladesh registry search terms; "
+        'return JSON such as {"candidate_terms":["brand name"]}.'
+    )
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": "Smart-Krishi-Buddhimotta/1.0",
+    }
+
+    for model in candidate_models()[:2]:
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message},
+            ],
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+        }
+        if "gpt-oss" in model.casefold():
+            payload["max_completion_tokens"] = 180
+            payload["reasoning_effort"] = "low"
+        else:
+            payload["max_tokens"] = 180
+
+        try:
+            response = requests.post(
+                GROQ_CHAT_URL,
+                headers=headers,
+                json=payload,
+                timeout=(2, 5),
+            )
+        except requests.RequestException:
+            continue
+        if response.status_code >= 400:
+            continue
+        try:
+            body = response.json()
+            choices = body.get("choices") or []
+            message = choices[0].get("message", {}) if choices else {}
+            content = message.get("content", "")
+            if isinstance(content, list):
+                content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+            text = str(content or "")
+            start, end = text.find("{"), text.rfind("}")
+            parsed = json.loads(text[start:end + 1]) if start >= 0 and end > start else {}
+        except (ValueError, TypeError, AttributeError, KeyError, IndexError):
+            continue
+
+        raw_terms = parsed.get("candidate_terms", []) if isinstance(parsed, dict) else []
+        if not isinstance(raw_terms, list):
+            continue
+        terms: list[str] = []
+        for item in raw_terms:
+            if not isinstance(item, str):
+                continue
+            term = re.sub(r"[^A-Za-z0-9\u0980-\u09FF .()_-]+", " ", item)
+            term = re.sub(r"\s+", " ", term).strip(" ._-")[:60]
+            if len(term) >= 3 and term.casefold() not in {value.casefold() for value in terms}:
+                terms.append(term)
+            if len(terms) == 3:
+                break
+        if terms:
+            return terms
+    return []
 
 
 def disease_summary(

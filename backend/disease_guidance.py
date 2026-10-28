@@ -424,17 +424,10 @@ def get_unclassified_visual_guidance(cause_type: str = "unknown") -> dict[str, A
 
 
 def get_visual_disease_guidance(visual: dict[str, Any]) -> dict[str, Any]:
-    """Match a visual result only to an exact, locally curated DAE crop–disease use."""
+    """Match visual results to DAE use records, even when showing a conditional candidate."""
     cause_type = str(visual.get("cause_type", "unknown"))
     if visual.get("leaf_status") != "leaf":
         return get_unclassified_visual_guidance(cause_type)
-    if visual.get("confidence_band") not in {"medium", "high"}:
-        guidance = get_unclassified_visual_guidance(cause_type)
-        guidance["product_note"] = (
-            "ছবিভিত্তিক AI-এর শনাক্তকরণ কম নিশ্চিত বা নিশ্চিততার তথ্য অনুপস্থিত; সম্ভাব্য DAE label থাকলেও ভুল ফসল/রোগে ওষুধ না দিতে পণ্য ও মাত্রা দেখানো হচ্ছে না। "
-            "ভালো আলোতে নতুন ছবি তুলুন বা উপজেলা কৃষি অফিসে মিলিয়ে নিন।"
-        )
-        return guidance
 
     exact_label = _visual_product_label(
         visual.get("crop_en"), visual.get("crop_bn"),
@@ -457,6 +450,28 @@ def get_visual_disease_guidance(visual: dict[str, Any]) -> dict[str, Any]:
                 "ভুল পণ্য প্রয়োগ এড়াতে নাম/মাত্রা দেখানো হচ্ছে না। নতুন ছবি বা স্থানীয় কৃষি কর্মকর্তার সাহায্যে যাচাই করুন।"
             )
             return guidance
-        return get_disease_guidance(exact_label)
 
-    return get_unclassified_visual_guidance(cause_type)
+        guidance = get_disease_guidance(exact_label)
+        if visual.get("confidence_band") not in {"medium", "high"}:
+            if not guidance["products"]:
+                guidance = get_unclassified_visual_guidance(cause_type)
+                guidance["product_note"] = (
+                    "ছবিভিত্তিক শনাক্তকরণ কম নিশ্চিত এবং এই নির্দিষ্ট ফসল–রোগের জন্য যাচাইকৃত পণ্য-রেকর্ড মেলেনি; "
+                    "তাই কোনো ব্র্যান্ড/মাত্রা অনুমান করা হচ্ছে না।"
+                )
+                return guidance
+            guidance["category"] = "possible_disease_with_verified_label_candidate"
+            guidance["product_note"] = (
+                "ছবিভিত্তিক AI শনাক্তকরণ কম নিশ্চিত/অনুপস্থিত—এটি রোগনির্ণয় নয়। নিচের পণ্য ও মাত্রা DAE-র "
+                "একই ফসল–রোগের label-use রেকর্ড থেকে দেখানো শর্তসাপেক্ষ তথ্য; কেবল রোগটি বাস্তবে নিশ্চিত হলে বিবেচনা করুন। "
+                "প্রয়োগের আগে আসল প্যাকেটের বর্তমান লেবেল, PHI ও PPE এবং উপজেলা কৃষি কর্মকর্তার পরামর্শ মিলিয়ে নিন।"
+            )
+        return guidance
+
+    guidance = get_unclassified_visual_guidance(cause_type)
+    if visual.get("confidence_band") not in {"medium", "high"}:
+        guidance["product_note"] = (
+            "ছবিভিত্তিক AI-এর শনাক্তকরণ কম নিশ্চিত বা নিশ্চিততার তথ্য অনুপস্থিত, এবং DAE-তে একই ফসল–রোগের "
+            "label-use যাচাই হয়নি; তাই কোনো ব্র্যান্ড/মাত্রা অনুমান করা হচ্ছে না। ভালো আলোতে নতুন ছবি তুলুন বা উপজেলা কৃষি অফিসে মিলিয়ে নিন।"
+        )
+    return guidance
