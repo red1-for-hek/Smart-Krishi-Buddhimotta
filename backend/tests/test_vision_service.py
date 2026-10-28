@@ -45,7 +45,8 @@ class VisionServiceTests(unittest.TestCase):
             vision_service.requests, "post", return_value=response
         ) as post:
             result = vision_service.analyze_leaf_image(
-                "data:image/jpeg;base64,abc", [], ["Tomato___Early_blight"]
+                "data:image/jpeg;base64,abc", [], ["Tomato___Early_blight"],
+                "Ei roger jonne kon medicine use korbo?",
             )
         self.assertTrue(result["available"])
         self.assertTrue(result["image_sent_to_groq"])
@@ -55,6 +56,8 @@ class VisionServiceTests(unittest.TestCase):
         self.assertEqual(post.call_args.kwargs["json"]["model"], vision_service.DEFAULT_VISION_MODEL)
         content = post.call_args.kwargs["json"]["messages"][1]["content"]
         self.assertEqual(content[1]["type"], "image_url")
+        self.assertIn("Ei roger jonne kon medicine use korbo?", content[0]["text"])
+        self.assertIn("does not establish a disease or treatment", content[0]["text"])
         self.assertEqual(post.call_args.kwargs["json"]["response_format"], {"type": "json_object"})
 
     def test_pesticide_instructions_cannot_leak_into_visible_diagnosis_labels(self) -> None:

@@ -136,6 +136,83 @@ class DiseaseApiTests(unittest.TestCase):
         self.assertEqual(result["guidance"]["products"][0]["registration_no"], "AP-5112")
         self.assertEqual(result["guidance"]["products"][0]["rate"], "২ মিলি/লিটার পানি; ১০০০ মিলি/হেক্টর")
 
+    def test_transliterated_medicine_question_triggers_answer_with_verified_rice_blast_record(self) -> None:
+        visual = {
+            "leaf_status": "leaf",
+            "crop_en": "rice",
+            "crop_bn": "ধান",
+            "disease_en": "rice blast",
+            "disease_bn": "ধানের ব্লাস্ট",
+            "cause_type": "fungal",
+            "pathogen_en": None,
+            "visible_signs_bn": ["পাতায় লম্বাটে দাগ"],
+            "nonchemical_actions_bn": ["আক্রান্ত অংশের ছবি ও লক্ষণ কৃষি কর্মকর্তাকে দেখান"],
+            "confidence_band": "medium",
+            "plantvillage_class_label": None,
+        }
+        vision_response = {
+            "available": True,
+            "status": "ok",
+            "model": "qwen/qwen3.8-27b",
+            "result": visual,
+            "image_sent_to_groq": True,
+        }
+        question = "Ei roger jonne kon medicine use korbo?"
+        with patch.object(main, "_load_disease_model", side_effect=AssertionError("vision result should not load local model")), patch.object(
+            main, "analyze_leaf_image", return_value=vision_response
+        ) as analyze_mock, patch.object(
+            main, "disease_summary", return_value=("DAE-যাচাইকৃত তথ্য দেখুন।", "openai/gpt-oss-20b", None)
+        ) as summary_mock:
+            result = main.disease(DiseaseRequest(image_data_url=_image_data_url(), question=question))
+
+        self.assertEqual(analyze_mock.call_args.args[3], question)
+        self.assertTrue(result["summary_requested"])
+        self.assertTrue(result["summary_available"])
+        self.assertEqual(result["summary"], "DAE-যাচাইকৃত তথ্য দেখুন।")
+        summary_kwargs = summary_mock.call_args.kwargs
+        self.assertEqual(summary_mock.call_args.args[4], question)
+        self.assertEqual(summary_kwargs["verified_products"][0]["registration_no"], "AP-5112")
+        self.assertEqual(summary_kwargs["verified_products"][0]["rate"], "২ মিলি/লিটার পানি; ১০০০ মিলি/হেক্টর")
+        self.assertFalse(summary_kwargs["conditional_candidate"])
+
+    def test_treatment_question_with_no_dae_match_passes_empty_product_context(self) -> None:
+        visual = {
+            "leaf_status": "leaf",
+            "crop_en": "jute",
+            "crop_bn": "পাট",
+            "disease_en": "leaf spot",
+            "disease_bn": "পাতার দাগ",
+            "cause_type": "fungal",
+            "pathogen_en": None,
+            "visible_signs_bn": ["পাতায় ছোট বাদামি দাগ"],
+            "nonchemical_actions_bn": [],
+            "confidence_band": "medium",
+            "plantvillage_class_label": None,
+        }
+        vision_response = {
+            "available": True,
+            "status": "ok",
+            "model": "qwen/qwen3.8-27b",
+            "result": visual,
+            "image_sent_to_groq": True,
+        }
+        question = "Ei rog er medicine ki?"
+        with patch.object(main, "_load_disease_model", side_effect=AssertionError("vision result should not load local model")), patch.object(
+            main, "analyze_leaf_image", return_value=vision_response
+        ) as analyze_mock, patch.object(
+            main, "lookup_ppw_live_product", return_value={"status": "no_match", "product": None}
+        ), patch.object(main, "pesticide_registry_candidate_terms", return_value=[]), patch.object(
+            main, "disease_summary", return_value=("নির্দিষ্ট DAE পণ্য যাচাই করা যায়নি।", "openai/gpt-oss-20b", None)
+        ) as summary_mock:
+            result = main.disease(DiseaseRequest(image_data_url=_image_data_url(), question=question))
+
+        self.assertEqual(analyze_mock.call_args.args[3], question)
+        self.assertTrue(result["summary_requested"])
+        self.assertEqual(result["guidance"]["products"], [])
+        self.assertEqual(summary_mock.call_args.args[4], question)
+        self.assertEqual(summary_mock.call_args.kwargs["verified_products"], [])
+        self.assertFalse(summary_mock.call_args.kwargs["conditional_candidate"])
+
     def test_low_confidence_rice_blast_still_shows_conditional_official_use_candidate(self) -> None:
         visual = {
             "leaf_status": "leaf",

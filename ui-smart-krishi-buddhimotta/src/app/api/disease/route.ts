@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     }, { status: 503 });
   }
 
-  let body: { image_data_url?: unknown; symptom?: unknown; include_ai_explanation?: unknown };
+  let body: { image_data_url?: unknown; question?: unknown; symptom?: unknown; include_ai_explanation?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -28,7 +28,9 @@ export async function POST(request: NextRequest) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         image_data_url: body.image_data_url,
-        symptom: typeof body.symptom === "string" ? body.symptom.slice(0, 500) : "",
+        question: typeof body.question === "string"
+          ? body.question.slice(0, 500)
+          : typeof body.symptom === "string" ? body.symptom.slice(0, 500) : "",
         include_ai_explanation: body.include_ai_explanation === true,
       }),
       cache: "no-store",
