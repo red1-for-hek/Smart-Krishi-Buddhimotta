@@ -60,7 +60,7 @@ type DiseaseProduct = {
   source_url: string;
 };
 type DiseaseDiagnosis = {
-  source: "groq_qwen_vision" | "plantvillage_classifier";
+  source: "krittim_vision" | "plantvillage_classifier";
   leaf_status: "leaf" | "not_leaf" | "uncertain";
   crop_label: string;
   disease_label: string;
@@ -87,9 +87,9 @@ type DiseaseResponse = {
   top_predictions: DiseasePrediction[];
   scope_warning: string;
   guidance: DiseaseGuidance;
-  vision_analysis: { available: boolean; status: string; model: string };
+  vision_analysis: { available: boolean; status: string };
   local_model_available: boolean;
-  image_sent_to_groq: boolean;
+  image_sent_to_vision_service: boolean;
   summary?: string | null;
   summary_requested: boolean;
   summary_available: boolean;
@@ -422,8 +422,8 @@ export default function HomePage() {
     <main className="app-shell">
       <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
         <div className="brand-lockup">
-          <div className="brand-mark"><NextImage src="/brand-logo.png" alt="Agri Smart BD" width={52} height={52} priority /></div>
-          <div className="brand-copy"><strong>স্মার্ট কৃষি বুদ্ধিমত্তা</strong><span>Technology should empower those who feed nations</span></div>
+          <div className="brand-mark"><NextImage src="/brand-logo.png" alt="স্মার্ট কৃষি বুদ্ধিমত্তা" width={52} height={52} priority /></div>
+          <div className="brand-copy"><strong>স্মার্ট কৃষি বুদ্ধিমত্তা</strong><span>BNMPC IT Club</span></div>
           <button className="icon-button close-menu" onClick={() => setMobileNav(false)} aria-label="মেনু বন্ধ করুন"><X size={19} /></button>
         </div>
         <div className="sidebar-label">মূল নেভিগেশন</div>
@@ -446,7 +446,7 @@ export default function HomePage() {
         <header className="topbar">
           <button className="icon-button hamburger" onClick={() => setMobileNav(true)} aria-label="মেনু খুলুন"><Menu size={22} /></button>
           <div className="breadcrumb"><span>স্মার্ট কৃষি বুদ্ধিমত্তা</span><ChevronRight size={14} /><strong>{navigation.find((item) => item.id === active)?.label}</strong></div>
-          <div className="topbar-actions"><div className="live-label"><span className="status-dot" /> সেবা চালু</div><button className="profile-button" onClick={() => setActive("chat")}><Bot size={17} /><span>AI সহায়ক</span></button></div>
+          <div className="topbar-actions"><div className="live-label"><span className="status-dot" /> সেবা চালু</div><button className="profile-button" onClick={() => setActive("chat")}><Bot size={17} /><span>Krittim-S1</span></button></div>
         </header>
 
         <div className="page-content">
@@ -587,7 +587,7 @@ function DiseaseAssistant({
   reanalyse: () => void;
 }) {
   const diagnosis = result?.diagnosis;
-  const healthy = diagnosis?.cause_type === "healthy" || result?.guidance.category === "healthy_class";
+  const healthy = (diagnosis?.leaf_status === "leaf" && diagnosis.cause_type === "healthy") || result?.guidance.category === "healthy_class";
   const actions = diagnosis?.nonchemical_actions_bn.length
     ? diagnosis.nonchemical_actions_bn.slice(0, 2)
     : (result?.guidance.actions ?? []).slice(0, 2);
@@ -598,7 +598,7 @@ function DiseaseAssistant({
 
   return <>
     <ScreenTitle eyebrow="ছবি দিন, প্রাথমিক সহায়তা পান" title="রোগ সহায়তা" />
-    <div className="notice info-notice disease-scope-notice"><ShieldCheck size={19}/><div><strong>ছবিভিত্তিক AI প্রাথমিক যাচাই</strong><p>Qwen Vision চালু থাকলে আপনার ছবি এবং লেখা লক্ষণ (যদি দেন) বিশ্লেষণের জন্য Groq-এ পাঠানো হয়; স্থানীয় ResNet9-এর ৩৮টি PlantVillage শ্রেণি শুধু সহায়ক। ছবি থেকে ফসল/রোগ নিশ্চিত নয়—চিকিৎসার আগে লক্ষণ মিলিয়ে নিন। ব্যক্তিগত বা পরিচয়-দেখা যায় এমন ছবি দেবেন না।</p></div></div>
+    <div className="notice info-notice disease-scope-notice"><ShieldCheck size={19}/><div><strong>Krittim AI Vision · ছবিভিত্তিক প্রাথমিক যাচাই</strong><p>বিশ্লেষণ চালু থাকলে আপলোড করা ছবি ও আপনার লেখা লক্ষণ সংযুক্ত দূরবর্তী AI সেবায় পাঠানো হতে পারে। স্থানীয় ResNet9-এর ৩৮টি PlantVillage শ্রেণি সীমিত সহায়ক—বাংলাদেশের সব ফসল বা রোগ এতে নেই। এক ছবিতে নিশ্চিত রোগনির্ণয় হয় না; ব্যক্তিগত বা পরিচয়-দেখা যায় এমন ছবি দেবেন না।</p></div></div>
     <div className="diagnosis-flow" aria-label="রোগ সহায়তা ব্যবহারের ধাপ">
       <div><span>১</span><strong>পাতার ছবি দিন</strong></div><ChevronRight size={18} aria-hidden="true" />
       <div><span>২</span><strong>লক্ষণ লিখুন <em>(ঐচ্ছিক)</em></strong></div><ChevronRight size={18} aria-hidden="true" />
@@ -638,7 +638,7 @@ function DiseaseAssistant({
       <div className="diagnosis-card panel">
         <div className="panel-heading"><div><p className="section-kicker">ঐচ্ছিক পর্যবেক্ষণ</p><h2>আপনি কী লক্ষ করছেন?</h2></div><Bug size={23} className="muted-icon"/></div>
         <label className="text-field"><span>পাতার দৃশ্যমান লক্ষণ (ঐচ্ছিক)</span><textarea value={symptom} onChange={(event) => setSymptom(event.target.value)} placeholder="যেমন: পাতায় বাদামি দাগ, কুঁকড়ে যাচ্ছে, গাছ দুর্বল দেখাচ্ছে…" rows={5}/></label>
-        <label className="ai-option-card"><input type="checkbox" checked={includeAiExplanation} onChange={(event) => setIncludeAiExplanation(event.target.checked)} /><span><strong>দীর্ঘ AI ব্যাখ্যা যোগ করুন</strong><small>সংক্ষিপ্ত ভিজ্যুয়াল ফল সবসময় আগে আসে। এটি চালু করলে Qwen ফল ও আপনার লেখা লক্ষণ Groq-এর টেক্সট মডেলে পাঠিয়ে অতিরিক্ত ব্যাখ্যা চাওয়া হবে; কোনো ওষুধ/ডোজ নয়।</small></span><Sparkles size={18}/></label>
+        <label className="ai-option-card"><input type="checkbox" checked={includeAiExplanation} onChange={(event) => setIncludeAiExplanation(event.target.checked)} /><span><strong>Krittim-S1 দিয়ে দীর্ঘ AI ব্যাখ্যা যোগ করুন</strong><small>সংক্ষিপ্ত ভিজ্যুয়াল ফল সবসময় আগে আসে। চালু করলে Krittim AI Vision-এর সারাংশ ও আপনার লেখা লক্ষণ দূরবর্তী text AI সেবায় পাঠানো হবে—ছবিটি নয়; কোনো ওষুধ বা ডোজ দেওয়া হবে না।</small></span><Sparkles size={18}/></label>
         <button type="button" className="primary-button full-width" onClick={reanalyse} disabled={!plantImage || loading}>{loading ? <LoaderCircle size={17} className="spin"/> : <ScanLine size={17}/>} {loading ? "বিশ্লেষণ চলছে" : "লক্ষণ/AI বিকল্পসহ আবার বিশ্লেষণ"}</button>
         <p className="tiny-note"><ShieldCheck size={14}/> ফসল বাছাইয়ের প্রয়োজন নেই। লক্ষণ বা AI বিকল্প বদলালে নতুন বিশ্লেষণ চালান।</p>
       </div>
@@ -648,13 +648,13 @@ function DiseaseAssistant({
       <div className="result-heading panel diagnosis-direct-card">
         <div className="result-status-icon"><Leaf size={22}/></div>
         <div className="diagnosis-copy">
-          <p className="section-kicker">{diagnosis?.source === "groq_qwen_vision" ? "Qwen Vision · প্রাথমিক ছবি-অনুমান" : "স্থানীয় PlantVillage মডেল · প্রাথমিক অনুমান"}</p>
-          <h2>{diagnosis?.crop_label || result.prediction.crop_label} <span>·</span> {diagnosis?.disease_label || result.prediction.label}</h2>
-          <p className="result-cause">{diagnosis?.cause_label_bn || "কারণ অনিশ্চিত"}</p>
-          <p className="result-score">{result.image_sent_to_groq ? result.vision_analysis.available ? "ছবিটি visual analysis-এর জন্য Groq-এ পাঠানো হয়েছে।" : "Groq-এ ছবি বিশ্লেষণের অনুরোধ পাঠানো হয়েছে, তবে ফল পাওয়া যায়নি।" : "Groq Vision চালু নেই; স্থানীয় মডেলের ফল দেখানো হচ্ছে।"}</p>
+          <p className="section-kicker">{diagnosis?.source === "krittim_vision" ? "Krittim AI Vision · প্রাথমিক ছবি-অনুমান" : "স্থানীয় সীমিত মডেল · সহায়ক অনুমান"}</p>
+          <h2>{diagnosis?.disease_label || result.prediction.label}</h2>
+          <p className="result-cause">{diagnosis?.cause_label_bn || "ছবি থেকে কারণ নির্ধারণ করা যায়নি"}</p>
+          <p className="result-score">{result.image_sent_to_vision_service ? result.vision_analysis.available ? "ছবিটি বিশ্লেষণের জন্য দূরবর্তী AI সেবায় পাঠানো হয়েছিল।" : "ছবি AI সেবায় পাঠানোর চেষ্টা হয়েছে, তবে ফল পাওয়া যায়নি।" : "দূরবর্তী ছবি-ভিত্তিক AI চালু নেই; সীমিত স্থানীয় মডেলের ফল দেখানো হচ্ছে।"}</p>
         </div>
       </div>
-      {!result.vision_analysis.available && <div className="notice warning-notice result-caveat"><FileWarning size={18}/><div><strong>ভিজ্যুয়াল AI ফল পাওয়া যায়নি</strong><p>{result.vision_analysis.status === "not_configured" ? "স্থানীয় ৩৮-শ্রেণির fallback দেখানো হয়েছে। Qwen ব্যবহার করতে backend-এ GROQ_API_KEY ও GROQ_VISION_MODEL সেট করুন।" : result.vision_analysis.status === "invalid_key" ? "Groq API key যাচাই হয়নি; স্থানীয় fallback দেখানো হয়েছে। Render-এর GROQ_API_KEY পরীক্ষা করুন।" : result.vision_analysis.status === "model_unavailable" ? "সেট করা Qwen vision model পাওয়া যায়নি; GROQ_VISION_MODEL ও account access পরীক্ষা করুন।" : result.vision_analysis.status === "rate_limit" ? "Groq-এর অনুরোধসীমা পূর্ণ; পরে আবার চেষ্টা করুন। আপাতত স্থানীয় fallback দেখানো হয়েছে।" : "Groq vision উত্তর দেয়নি; স্থানীয় ৩৮-শ্রেণির fallback দেখানো হয়েছে, যা বাংলাদেশের সব ফসল/রোগ শনাক্ত করে না।"}</p></div></div>}
+      {!result.vision_analysis.available && <div className="notice warning-notice result-caveat"><FileWarning size={18}/><div><strong>ছবিভিত্তিক AI ফল পাওয়া যায়নি</strong><p>{result.vision_analysis.status === "not_configured" ? "দূরবর্তী ভিশন AI সেটআপ নেই; সীমিত ৩৮-শ্রেণির স্থানীয় ফল দেখানো হয়েছে।" : result.vision_analysis.status === "invalid_key" ? "ভিশন AI সেবার কনফিগারেশন যাচাই হয়নি; স্থানীয় সীমিত ফল দেখানো হয়েছে।" : result.vision_analysis.status === "model_unavailable" ? "কনফিগার করা ভিশন মডেলটি পাওয়া যায়নি; স্থানীয় সীমিত ফল দেখানো হয়েছে।" : result.vision_analysis.status === "rate_limit" ? "ভিশন AI সেবার অনুরোধসীমা পূর্ণ; পরে আবার চেষ্টা করুন। আপাতত স্থানীয় সীমিত ফল দেখানো হয়েছে।" : "ভিশন AI উত্তর দেয়নি; স্থানীয় ৩৮-শ্রেণির fallback বাংলাদেশের সব ফসল/রোগ শনাক্ত করে না।"}</p></div></div>}
       <div className="notice warning-notice result-caveat"><FileWarning size={19}/><div><strong>এটি নিশ্চিত রোগনির্ণয় নয়</strong><p>{result.scope_warning}</p></div></div>
 
       <section className="panel result-card quick-prescription-card">
@@ -674,11 +674,13 @@ function DiseaseAssistant({
               <p><strong>শুধু এই ব্যবহার:</strong> {product.label_scope}</p>
               <p><strong>রেকর্ডের মাত্রা:</strong> {product.rate}</p>
               <p><strong>প্রয়োগপথ:</strong> {product.application_method}</p>
+              <p className="small-caveat">{result.guidance.product_note}</p>
               <p className="small-caveat">ছবির AI ফল ভুল হতে পারে—ফসল/রোগ বাস্তবে মিললে তবেই বিবেচনা করুন। বর্তমান প্যাকেটের লেবেলই চূড়ান্ত; রেকর্ড মানেই দোকানে মজুত বা নিবন্ধন সক্রিয়—এ নিশ্চয়তা নয়।</p>
               <a className="product-source-link" href={product.source_url} target="_blank" rel="noreferrer">{product.source_label} <MoveUpRight size={14}/></a>
             </>; })()}
           </> : <>
-            <p>{healthy ? "রোগ বা পুষ্টিঘাটতি নিশ্চিত নয়—অপ্রয়োজনীয় ওষুধ/সার দেবেন না।" : "এই ফল থেকে নিরাপদে DAE label-dose নিশ্চিত করা যাচ্ছে না।"}</p>
+            <p>{healthy ? "ছবিতে স্পষ্ট রোগচিহ্ন নেই; রোগ বা পুষ্টিঘাটতির প্রমাণ ছাড়া ওষুধ/সার দেবেন না।" : "এই ফল থেকে নির্ভরযোগ্য ফসল–রোগ মিল ও DAE-যাচাইকৃত পণ্যের মাত্রা নিশ্চিত করা যায়নি।"}</p>
+            <p className="small-caveat">{result.guidance.product_note}</p>
             {!healthy && <p className="small-caveat">নিজে থেকে ব্র্যান্ড, মাত্রা, মিশ্রণ বা পাতায়/গোড়ায় প্রয়োগ ঠিক করবেন না; আগে উপজেলা কৃষি অফিসে যাচাই করুন।</p>}
           </>}
         </div>
@@ -692,7 +694,7 @@ function DiseaseAssistant({
           {result.top_predictions.length > 0 ? <div className="top-predictions-card">
             <div className="panel-heading"><div><p className="section-kicker">কেবল স্থানীয় মডেলের বিকল্প</p><h3>শীর্ষ শ্রেণিগুলো</h3></div><span className="model-tag">৩৮-শ্রেণির মডেল</span></div>
             <div className="prediction-list">{result.top_predictions.slice(0, 3).map((item, index) => <div className="prediction-item" key={item.class_label}>
-              <span className="prediction-rank">{formatBnNumber(index + 1)}</span><div className="prediction-name"><strong>{item.crop_label} · {item.label}</strong><div className="prediction-track"><i style={{ width: `${Math.max(0, Math.min(100, item.score_percent))}%` }}/></div></div><span className="prediction-score">{formatBnNumber(item.score_percent, 1)}%</span>
+              <span className="prediction-rank">{formatBnNumber(index + 1)}</span><div className="prediction-name"><strong>{item.label}</strong><div className="prediction-track"><i style={{ width: `${Math.max(0, Math.min(100, item.score_percent))}%` }}/></div></div><span className="prediction-score">{formatBnNumber(item.score_percent, 1)}%</span>
             </div>)}</div>
             <p className="small-caveat">এগুলো softmax score, ক্যালিব্রেটেড সম্ভাবনা বা নির্ভুলতা নয়।</p>
           </div> : <p className="small-caveat">স্থানীয় ৩৮-শ্রেণির মডেল এই অনুরোধে চালু ছিল না।</p>}
@@ -707,7 +709,7 @@ function DiseaseAssistant({
         </div>
       </details>
 
-      {result.summary_requested && <section className="panel ai-summary-card"><div className="panel-heading"><div><p className="section-kicker">ঐচ্ছিক AI ব্যাখ্যা</p><h2>আরও ব্যাখ্যা</h2></div><Sparkles size={20} className="muted-icon"/></div>{result.summary_available && result.summary ? <MarkdownContent content={result.summary} className="ai-summary-text"/> : <p className="small-caveat">এই মুহূর্তে AI ব্যাখ্যা পাওয়া যায়নি। সংক্ষিপ্ত নিয়মভিত্তিক নির্দেশনা উপরে আছে।</p>}<p className="small-caveat">টেক্সট মডেল ছবির pixel দেখে না; এটি Qwen Vision-এর সংক্ষিপ্ত ফল ও আপনার লেখা লক্ষণ থেকে ব্যাখ্যা দেয়। AI ব্যাখ্যা কোনো প্রেসক্রিপশন নয়।</p></section>}
+      {result.summary_requested && <section className="panel ai-summary-card"><div className="panel-heading"><div><p className="section-kicker">ঐচ্ছিক Krittim-S1 ব্যাখ্যা</p><h2>আরও ব্যাখ্যা</h2></div><Sparkles size={20} className="muted-icon"/></div>{result.summary_available && result.summary ? <MarkdownContent content={result.summary} className="ai-summary-text"/> : <p className="small-caveat">এই মুহূর্তে AI ব্যাখ্যা পাওয়া যায়নি। সংক্ষিপ্ত নিয়মভিত্তিক নির্দেশনা উপরে আছে।</p>}<p className="small-caveat">Krittim-S1 ছবির pixel দেখে না; এটি Krittim AI Vision-এর সংক্ষিপ্ত ফল ও আপনার লেখা লক্ষণ থেকে ব্যাখ্যা দেয়। AI ব্যাখ্যা কোনো প্রেসক্রিপশন নয়।</p></section>}
     </section>}
   </>;
 }
@@ -823,7 +825,7 @@ function Chat({ messages, input, setInput, onSubmit, loading, error, districtNam
   }
 
   return <>
-    <ScreenTitle eyebrow="বাংলায় কৃষির কথা বলুন" title="AI কৃষি সহায়ক"><div className="ai-chip"><Bot size={17}/> স্মার্ট কৃষি বুদ্ধিমত্তা AI</div></ScreenTitle>
+    <ScreenTitle eyebrow="বাংলায় কৃষির কথা বলুন" title="AI কৃষি সহায়ক"><div className="ai-chip"><Bot size={17}/> Krittim-S1</div></ScreenTitle>
     <section className="chat-layout">
       <aside className="chat-context">
         <div className="assistant-avatar"><Bot size={25}/></div>
@@ -836,7 +838,7 @@ function Chat({ messages, input, setInput, onSubmit, loading, error, districtNam
       <div className="chat-panel panel">
         <div className="chat-head">
           <div><strong>স্মার্ট কৃষি বুদ্ধিমত্তা</strong><span><i className="status-dot"/> উত্তর দিতে প্রস্তুত</span></div>
-          <span>সাধারণ কৃষি সহায়তা</span>
+          <span>Krittim-S1 · সাধারণ কৃষি সহায়তা</span>
         </div>
         <div className="chat-thread">
           {messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}>
@@ -866,7 +868,7 @@ function Chat({ messages, input, setInput, onSubmit, loading, error, districtNam
             {interimTranscript ? `${speechLanguage === "bn-BD" ? "শুনছি" : "Listening"}: ${interimTranscript}` : speechMessage}
           </p>}
         </form>
-        <p className="voice-privacy-note">কথা লেখা ব্রাউজারের built-in speech recognition দিয়ে হয়—কোনো আলাদা API key বা অ্যাপ ফি নেই। কিছু ব্রাউজার অডিও তাদের speech service-এ পাঠাতে পারে; লেখা পাঠালে সেটি AI উত্তর পেতে Groq-এ যায়।</p>
+        <p className="voice-privacy-note">কথা লেখা ব্রাউজারের built-in speech recognition দিয়ে হয়—কোনো আলাদা API key বা অ্যাপ ফি নেই। কিছু ব্রাউজার অডিও তাদের speech service-এ পাঠাতে পারে; লেখা পাঠালে Krittim-S1 উত্তর তৈরির জন্য দূরবর্তী AI সেবায় পাঠানো হয়।</p>
         <p className="chat-disclaimer">AI-এর পরামর্শ সাধারণ তথ্য। রোগ, সার ও বালাই ব্যবস্থাপনায় স্থানীয় কৃষি বিশেষজ্ঞের পরামর্শ নিন।</p>
       </div>
     </section>

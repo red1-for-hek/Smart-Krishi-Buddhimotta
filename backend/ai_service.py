@@ -150,7 +150,7 @@ def disease_summary(
     )
     if visual_assessment:
         vision_context = (
-            "ছবিটি আলাদা Qwen vision model দেখেছে; তুমি ছবির pixel দেখছ না। "
+            "ছবিটি Krittim AI Vision-এর প্রাথমিক বিশ্লেষণ পেয়েছে; তুমি ছবির pixel দেখছ না। "
             f"তার সংক্ষিপ্ত ফল: crop={visual_assessment.get('crop_bn') or visual_assessment.get('crop_en') or 'অনিশ্চিত'}; "
             f"disease={visual_assessment.get('disease_bn') or visual_assessment.get('disease_en') or 'অনিশ্চিত'}; "
             f"cause_type={visual_assessment.get('cause_type') or 'unknown'}; "

@@ -10,6 +10,11 @@ from backend import vision_service
 
 
 class VisionServiceTests(unittest.TestCase):
+    def test_prompt_covers_bangladesh_crops_outside_local_classes(self) -> None:
+        self.assertIn("rice/paddy", vision_service._SYSTEM_PROMPT)
+        self.assertIn("outside the local model's 38 classes", vision_service._SYSTEM_PROMPT)
+        self.assertIn("without a crop name", vision_service._SYSTEM_PROMPT)
+
     def test_missing_api_key_does_not_send_image(self) -> None:
         with patch.dict(os.environ, {"GROQ_API_KEY": ""}, clear=False), patch.object(
             vision_service.requests, "post"

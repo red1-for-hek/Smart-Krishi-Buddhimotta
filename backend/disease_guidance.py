@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from backend.disease_labels import DISEASE_TRANSLATION
+from backend.disease_labels import disease_only_label
 
 CHECKED_ON = "2026-10-22"
 DAE_REGISTRY_URL = "https://dae.gov.bd/site/files/4ea8e032-77df-4e6b-952b-5eab3004113c/-Registered-Pesticide"
@@ -279,12 +279,10 @@ def get_disease_guidance(class_label: str) -> dict[str, Any]:
             "পরীক্ষিত রোগমুক্তির নিশ্চয়তা নয়।"
         )
     else:
-        display_label = DISEASE_TRANSLATION.get(
-            class_label, class_label.replace("___", " — ").replace("_", " ")
-        )
+        display_label = disease_only_label(class_label)
         reason = (
-            f"মডেল এই ছবির সম্ভাব্য শ্রেণি হিসেবে ‘{display_label}’ দিয়েছে। "
-            "মডেল ছবিটি থেকে নির্দিষ্ট লক্ষণ ব্যাখ্যা করে না; নিচের লক্ষণগুলো হাতে মিলিয়ে দেখুন।"
+            f"মডেল এই ছবির সম্ভাব্য রোগ-শ্রেণি হিসেবে ‘{display_label}’ দিয়েছে। "
+            "এটি নিশ্চিত রোগনির্ণয় নয়; নিচের লক্ষণগুলো হাতে মিলিয়ে দেখুন।"
         )
 
     sources = list(_BASE_SOURCES)

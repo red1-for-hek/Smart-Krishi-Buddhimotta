@@ -33,6 +33,8 @@ class DiseaseGuidanceTests(unittest.TestCase):
         self.assertIn("টমেটো", product["label_scope"])
         self.assertIn("application_method", product)
         self.assertEqual(product["source_url"], "https://ppw.krishi.gov.bd/pesticide-details/13610")
+        self.assertNotIn("টমেটো", guidance["reason"])
+        self.assertIn("আর্লি ব্লাইট", guidance["reason"])
 
     def test_visual_cucurbit_pair_uses_the_exact_recorded_rate(self) -> None:
         guidance = get_visual_disease_guidance({

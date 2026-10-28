@@ -95,9 +95,10 @@ class DiseaseApiTests(unittest.TestCase):
         self.assertEqual(analyze_mock.call_args.args[1], [])
         self.assertTrue(analyze_mock.call_args.args[0].startswith("data:image/jpeg;base64,"))
         self.assertEqual(analyze_mock.call_args.args[3], "পাতায় দাগ")
-        self.assertEqual(result["diagnosis"]["source"], "groq_qwen_vision")
+        self.assertEqual(result["diagnosis"]["source"], "krittim_vision")
         self.assertEqual(result["diagnosis"]["crop_label"], "টমেটো")
-        self.assertTrue(result["image_sent_to_groq"])
+        self.assertEqual(result["diagnosis"]["disease_label"], "আর্লি ব্লাইট")
+        self.assertTrue(result["image_sent_to_vision_service"])
         self.assertFalse(result["local_model_available"])
         self.assertEqual(result["guidance"]["products"][0]["registration_no"], "AP-664")
         self.assertEqual(result["guidance"]["products"][0]["rate"], "২ গ্রাম / ১ লিটার পানি")
@@ -136,11 +137,13 @@ class DiseaseApiTests(unittest.TestCase):
             result = main.disease(DiseaseRequest(image_data_url=_image_data_url()))
 
         self.assertEqual(result["diagnosis"]["source"], "plantvillage_classifier")
-        self.assertFalse(result["image_sent_to_groq"])
+        self.assertFalse(result["image_sent_to_vision_service"])
         self.assertTrue(result["local_model_available"])
         self.assertEqual(result["prediction"]["class_label"], "Potato___Late_blight")
+        self.assertEqual(result["prediction"]["label"], "লেট ব্লাইট রোগ")
+        self.assertEqual(result["top_predictions"][0]["label"], "লেট ব্লাইট রোগ")
         self.assertEqual(result["guidance"]["products"], [])
-        self.assertIn("গোপন রাখা হয়েছে", result["guidance"]["product_note"])
+        self.assertIn("দেখানো হচ্ছে না", result["guidance"]["product_note"])
 
     def test_capsicum_vision_result_does_not_receive_chili_label_product(self) -> None:
         visual = {
@@ -166,6 +169,53 @@ class DiseaseApiTests(unittest.TestCase):
         self.assertEqual(result["diagnosis"]["crop_label"], "ক্যাপসিকাম")
         self.assertEqual(result["guidance"]["products"], [])
         self.assertIn("যাচাইকৃত DAE", result["guidance"]["product_note"])
+
+    def test_missing_vision_disease_text_uses_a_valid_local_class_label(self) -> None:
+        visual = {
+            "leaf_status": "leaf",
+            "crop_en": "tomato",
+            "crop_bn": "টমেটো",
+            "disease_en": None,
+            "disease_bn": None,
+            "cause_type": "fungal",
+            "visible_signs_bn": ["পাতায় বলয়যুক্ত বাদামি দাগ"],
+            "nonchemical_actions_bn": [],
+            "confidence_band": "medium",
+            "plantvillage_class_label": "Tomato___Early_blight",
+        }
+        vision_response = {"available": True, "status": "ok", "result": visual, "image_sent_to_groq": True}
+        fake_module = self._fake_model_module()
+        with patch.dict(sys.modules, {"disease_model": fake_module}), patch.object(
+            main, "_load_disease_model", side_effect=AssertionError("vision result should not load local model")
+        ), patch.object(main, "analyze_leaf_image", return_value=vision_response):
+            result = main.disease(DiseaseRequest(image_data_url=_image_data_url()))
+
+        self.assertEqual(result["diagnosis"]["disease_label"], "আর্লি ব্লাইট রোগ")
+        self.assertEqual(result["prediction"]["label"], "আর্লি ব্লাইট রোগ")
+        self.assertEqual(result["guidance"]["products"], [])
+
+    def test_unclear_leaf_has_plain_uncertainty_instead_of_repeated_unknown(self) -> None:
+        visual = {
+            "leaf_status": "leaf",
+            "crop_en": "rice",
+            "crop_bn": "ধান",
+            "disease_en": None,
+            "disease_bn": None,
+            "cause_type": "unknown",
+            "visible_signs_bn": [],
+            "nonchemical_actions_bn": [],
+            "confidence_band": "low",
+            "plantvillage_class_label": None,
+        }
+        vision_response = {"available": True, "status": "ok", "result": visual, "image_sent_to_groq": True}
+        fake_module = self._fake_model_module()
+        with patch.dict(sys.modules, {"disease_model": fake_module}), patch.object(
+            main, "_load_disease_model", side_effect=AssertionError("vision result should not load local model")
+        ), patch.object(main, "analyze_leaf_image", return_value=vision_response):
+            result = main.disease(DiseaseRequest(image_data_url=_image_data_url()))
+
+        self.assertEqual(result["diagnosis"]["disease_label"], "লক্ষণ স্পষ্ট নয়—রোগ শনাক্ত করা যায়নি")
+        self.assertEqual(result["guidance"]["products"], [])
 
 
 if __name__ == "__main__":

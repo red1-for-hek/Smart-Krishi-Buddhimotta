@@ -4,6 +4,15 @@ Inherited label mapping retained from the Streamlit reference UI; this module
 does not change or retrain the model.
 """
 
+import re
+
+_CROP_TRANSLATIONS = {
+    "Apple": "আপেল", "Blueberry": "ব্লুবেরি", "Cherry_(including_sour)": "চেরি",
+    "Corn_(maize)": "ভুট্টা", "Grape": "আঙ্গুর", "Orange": "কমলা", "Peach": "পীচ",
+    "Pepper,_bell": "ক্যাপসিকাম", "Potato": "আলু", "Raspberry": "রাস্পবেরি",
+    "Soybean": "সয়াবিন", "Squash": "স্কোয়াশ", "Strawberry": "স্ট্রবেরি", "Tomato": "টমেটো",
+}
+
 DISEASE_TRANSLATION = {'Apple___Apple_scab': 'আপেল স্ক্যাব রোগ',
  'Apple___Black_rot': 'আপেলের কালো পচন রোগ',
  'Apple___Cedar_apple_rust': 'আপেলের সিডার মরিচা রোগ',
@@ -42,3 +51,39 @@ DISEASE_TRANSLATION = {'Apple___Apple_scab': 'আপেল স্ক্যাব
  'Tomato___Tomato_Yellow_Leaf_Curl_Virus': 'টমেটো ইয়েলো লিফ কার্ল ভাইরাস',
  'Tomato___Tomato_mosaic_virus': 'টমেটো মোজাইক ভাইরাস',
  'Tomato___healthy': 'টমেটো গাছ সুস্থ'}
+
+
+def disease_only_label(
+    class_label: str | None = None,
+    disease_label: str | None = None,
+    crop_labels: tuple[str | None, ...] | list[str | None] = (),
+) -> str:
+    """Return a disease-only Bengali label, removing a leading crop name.
+
+    Crop and class metadata remain available to callers for matching curated
+    crop–disease guidance; this function only shapes the visible diagnosis.
+    """
+    if class_label and class_label.endswith("___healthy"):
+        return "স্পষ্ট রোগের লক্ষণ নেই"
+
+    label = (disease_label or DISEASE_TRANSLATION.get(class_label or "") or "").strip()
+    if not label and class_label:
+        label = class_label.split("___", 1)[-1].replace("_", " ").strip()
+    if not label:
+        return ""
+
+    candidates = [value.strip() for value in crop_labels if isinstance(value, str) and value.strip()]
+    if class_label:
+        crop_key = class_label.split("___", 1)[0]
+        candidates.append(_CROP_TRANSLATIONS.get(crop_key, crop_key.replace("_", " ")))
+    for crop in sorted(set(candidates), key=len, reverse=True):
+        prefix = re.compile(
+            rf"^\s*{re.escape(crop)}(?:(?:'s|’s)|(?:এর|ের|র|ে))?(?=\s|[:—–·,]|$)\s*(?:[:—–·,]\s*)?",
+            re.IGNORECASE,
+        )
+        trimmed = prefix.sub("", label, count=1).strip()
+        if trimmed != label:
+            label = trimmed
+            break
+
+    return re.sub(r"^[\s,;:—–·-]+|[\s,;:—–·-]+$", "", label).strip()
