@@ -91,6 +91,7 @@ class ChatRequest(BaseModel):
 class DiseaseRequest(BaseModel):
     image_data_url: str = Field(min_length=50, max_length=3_000_000)
     symptom: str = Field(default="", max_length=500)
+    question: str = Field(default="", max_length=500)
     include_ai_explanation: bool = False
 
 
@@ -518,14 +519,16 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
         raise HTTPException(status_code=400, detail="ছবিটি পড়া যায়নি। অন্য JPG, PNG বা WebP ছবি দিন।") from None
 
+    user_question = (request.question or request.symptom).strip()
     allowed_classes = list(DISEASE_TRANSLATION.keys())
     # Qwen is the preferred visual path. Load the heavier local runtime only
     # when Qwen is not configured or cannot return a usable visual result.
+    # The question is contextual text, never visual evidence or a prescription.
     vision = analyze_leaf_image(
         vision_data_url,
         [],
         allowed_classes,
-        request.symptom,
+        user_question,
     )
     visual_result = vision.get("result") if vision.get("available") else None
 
@@ -645,11 +648,14 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
 
     answer = None
     ai_error = None
-    if request.include_ai_explanation:
+    summary_requested = request.include_ai_explanation or bool(request.question.strip())
+    if summary_requested:
         answer, _model_name, ai_error = disease_summary(
             diagnosis["crop_label"], diagnosis["disease_label"], prediction["score_percent"],
-            top_predictions, request.symptom,
+            top_predictions, user_question,
             visual_assessment=visual_result,
+            verified_products=guidance.get("products", []),
+            conditional_candidate=guidance.get("category") == "possible_disease_with_verified_label_candidate",
         )
 
     return {
@@ -665,7 +671,7 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
         "local_model_available": bool(top_predictions),
         "image_sent_to_vision_service": bool(vision.get("image_sent_to_groq")),
         "summary": answer,
-        "summary_requested": request.include_ai_explanation,
+        "summary_requested": summary_requested,
         "summary_available": answer is not None,
         "summary_error_code": ai_error,
         "model_scope": {

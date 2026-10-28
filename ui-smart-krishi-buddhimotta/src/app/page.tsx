@@ -198,7 +198,8 @@ export default function HomePage() {
   const [plantImage, setPlantImage] = useState<string | null>(null);
   const [plantFile, setPlantFile] = useState<File | null>(null);
   const [plantFileName, setPlantFileName] = useState("");
-  const [symptom, setSymptom] = useState("");
+  const [question, setQuestion] = useState("");
+  const [submittedQuestion, setSubmittedQuestion] = useState("");
   const [diseaseResult, setDiseaseResult] = useState<DiseaseResponse | null>(null);
   const [diseaseError, setDiseaseError] = useState("");
   const [diseaseLoading, setDiseaseLoading] = useState(false);
@@ -354,6 +355,7 @@ export default function HomePage() {
     setPlantImage(URL.createObjectURL(file));
     setPlantFileName(file.name || "নির্বাচিত গাছের ছবি");
     setDiseaseResult(null);
+    setSubmittedQuestion("");
     setDiseaseError("");
     setDiseaseLoading(true);
 
@@ -364,7 +366,7 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           image_data_url: imageData,
-          symptom,
+          question,
           include_ai_explanation: includeAiExplanation,
         }),
         signal: controller.signal,
@@ -373,7 +375,10 @@ export default function HomePage() {
       if (!response.ok || !data.prediction || !data.diagnosis || !data.guidance || !data.vision_analysis) {
         throw new Error(data.error ?? "ছবি বিশ্লেষণ করা যায়নি।");
       }
-      if (requestId === diseaseRequestId.current) setDiseaseResult(data);
+      if (requestId === diseaseRequestId.current) {
+        setDiseaseResult(data);
+        setSubmittedQuestion(question.trim());
+      }
     } catch (error) {
       if ((error as Error).name !== "AbortError" && requestId === diseaseRequestId.current) {
         setDiseaseError(error instanceof Error ? error.message : "এখন ছবি বিশ্লেষণ করা যাচ্ছে না।");
@@ -407,6 +412,7 @@ export default function HomePage() {
     setPlantFile(null);
     setPlantFileName("");
     setDiseaseResult(null);
+    setSubmittedQuestion("");
     setDiseaseError("");
   }
 
@@ -464,7 +470,7 @@ export default function HomePage() {
           {active === "disease" && <DiseaseAssistant
             plantImage={plantImage} plantFileName={plantFileName} galleryInput={galleryInput} cameraInput={cameraInput}
             onImage={onPlantImage} onDrop={onPlantDrop} isDragOver={isDragOver} setIsDragOver={setIsDragOver}
-            symptom={symptom} setSymptom={setSymptom} includeAiExplanation={includeAiExplanation}
+            question={question} submittedQuestion={submittedQuestion} setQuestion={setQuestion} includeAiExplanation={includeAiExplanation}
             setIncludeAiExplanation={setIncludeAiExplanation} result={diseaseResult} error={diseaseError}
             loading={diseaseLoading} clearImage={clearPlantImage} reanalyse={reanalysePlant}
           />}
@@ -566,7 +572,7 @@ function MarkdownContent({ content, className = "" }: { content: string; classNa
 
 function DiseaseAssistant({
   plantImage, plantFileName, galleryInput, cameraInput, onImage, onDrop, isDragOver, setIsDragOver,
-  symptom, setSymptom, includeAiExplanation, setIncludeAiExplanation, result, error, loading, clearImage, reanalyse,
+  question, submittedQuestion, setQuestion, includeAiExplanation, setIncludeAiExplanation, result, error, loading, clearImage, reanalyse,
 }: {
   plantImage: string | null;
   plantFileName: string;
@@ -576,8 +582,9 @@ function DiseaseAssistant({
   onDrop: (event: DragEvent<HTMLElement>) => void;
   isDragOver: boolean;
   setIsDragOver: (value: boolean) => void;
-  symptom: string;
-  setSymptom: (value: string) => void;
+  question: string;
+  submittedQuestion: string;
+  setQuestion: (value: string) => void;
   includeAiExplanation: boolean;
   setIncludeAiExplanation: (value: boolean) => void;
   result: DiseaseResponse | null;
@@ -598,11 +605,11 @@ function DiseaseAssistant({
 
   return <>
     <ScreenTitle eyebrow="ছবি দিন, প্রাথমিক সহায়তা পান" title="রোগ সহায়তা" />
-    <div className="notice info-notice disease-scope-notice"><ShieldCheck size={19}/><div><strong>Krittim AI Vision · ছবিভিত্তিক প্রাথমিক যাচাই</strong><p>বিশ্লেষণ চালু থাকলে আপলোড করা ছবি ও আপনার লেখা লক্ষণ সংযুক্ত দূরবর্তী AI সেবায় পাঠানো হতে পারে। স্থানীয় ResNet9-এর ৩৮টি PlantVillage শ্রেণি সীমিত সহায়ক—বাংলাদেশের সব ফসল বা রোগ এতে নেই। এক ছবিতে নিশ্চিত রোগনির্ণয় হয় না; ব্যক্তিগত বা পরিচয়-দেখা যায় এমন ছবি দেবেন না।</p></div></div>
+    <div className="notice info-notice disease-scope-notice"><ShieldCheck size={19}/><div><strong>ছবি-ভিত্তিক প্রাথমিক যাচাই · বাইরের AI সেবা</strong><p>Groq vision AI কনফিগার করা থাকলে ছবি ও আপনার প্রশ্ন প্রসঙ্গ হিসেবে সেখানে যায়; প্রশ্নটি দৃশ্যমান প্রমাণ নয়। সাধারণ AI ব্যাখ্যার জন্য প্রশ্ন ও সংক্ষিপ্ত ফল Groq text AI-তে পাঠানো হতে পারে—ছবির pixel নয়। ওষুধের উত্তরে নাম/মাত্রা কেবল অ্যাপের DAE-যাচাইকৃত record থেকে; না মিললে অনুমান করা হয় না। ছবিটি PPW-তে পাঠানো হয় না। স্থানীয় ResNet9-এর ৩৮টি শ্রেণি সীমিত—এক ছবিতে নিশ্চিত রোগনির্ণয় নয়; ব্যক্তিগত/পরিচয়-দেখা যায় এমন ছবি দেবেন না।</p></div></div>
     <div className="diagnosis-flow" aria-label="রোগ সহায়তা ব্যবহারের ধাপ">
       <div><span>১</span><strong>পাতার ছবি দিন</strong></div><ChevronRight size={18} aria-hidden="true" />
-      <div><span>২</span><strong>লক্ষণ লিখুন <em>(ঐচ্ছিক)</em></strong></div><ChevronRight size={18} aria-hidden="true" />
-      <div><span>৩</span><strong>ফল মিলিয়ে দেখুন</strong></div>
+      <div><span>২</span><strong>প্রশ্ন করুন <em>(ঐচ্ছিক)</em></strong></div><ChevronRight size={18} aria-hidden="true" />
+      <div><span>৩</span><strong>ছবি-ফল ও DAE তথ্য মিলিয়ে দেখুন</strong></div>
     </div>
 
     <section className="disease-layout">
@@ -636,11 +643,12 @@ function DiseaseAssistant({
       </div>
 
       <div className="diagnosis-card panel">
-        <div className="panel-heading"><div><p className="section-kicker">ঐচ্ছিক পর্যবেক্ষণ</p><h2>আপনি কী লক্ষ করছেন?</h2></div><Bug size={23} className="muted-icon"/></div>
-        <label className="text-field"><span>পাতার দৃশ্যমান লক্ষণ (ঐচ্ছিক)</span><textarea value={symptom} onChange={(event) => setSymptom(event.target.value)} placeholder="যেমন: পাতায় বাদামি দাগ, কুঁকড়ে যাচ্ছে, গাছ দুর্বল দেখাচ্ছে…" rows={5}/></label>
-        <label className="ai-option-card"><input type="checkbox" checked={includeAiExplanation} onChange={(event) => setIncludeAiExplanation(event.target.checked)} /><span><strong>Krittim-S1 দিয়ে দীর্ঘ AI ব্যাখ্যা যোগ করুন</strong><small>সংক্ষিপ্ত ভিজ্যুয়াল ফল সবসময় আগে আসে। চালু করলে Krittim AI Vision-এর সারাংশ ও আপনার লেখা লক্ষণ দূরবর্তী text AI সেবায় পাঠানো হবে—ছবিটি নয়; কোনো ওষুধ বা ডোজ দেওয়া হবে না।</small></span><Sparkles size={18}/></label>
-        <button type="button" className="primary-button full-width" onClick={reanalyse} disabled={!plantImage || loading}>{loading ? <LoaderCircle size={17} className="spin"/> : <ScanLine size={17}/>} {loading ? "বিশ্লেষণ চলছে" : "লক্ষণ/AI বিকল্পসহ আবার বিশ্লেষণ"}</button>
-        <p className="tiny-note"><ShieldCheck size={14}/> ফসল বাছাইয়ের প্রয়োজন নেই। লক্ষণ বা AI বিকল্প বদলালে নতুন বিশ্লেষণ চালান।</p>
+        <div className="panel-heading"><div><p className="section-kicker">ছবি-ভিত্তিক প্রশ্ন ও লক্ষণ</p><h2>আপনি কী জানতে বা জানাতে চান?</h2></div><Bug size={23} className="muted-icon"/></div>
+        <label className="text-field"><span>প্রশ্ন বা পাতার দৃশ্যমান লক্ষণ (ঐচ্ছিক)</span><textarea value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={500} placeholder="যেমন: Ei roger jonne kon medicine use korbo? / পাতায় বাদামি দাগ, কুঁকড়ে যাচ্ছে…" rows={5}/></label>
+        <p className="tiny-note">বাংলা বা English হরফে প্রশ্ন লিখতে পারেন। ছবির ফল দেখে উত্তর পেতে প্রশ্ন লেখার পর নিচের বোতাম চাপুন।</p>
+        <label className="ai-option-card"><input type="checkbox" checked={includeAiExplanation} onChange={(event) => setIncludeAiExplanation(event.target.checked)} /><span><strong>প্রশ্ন না থাকলে AI ব্যাখ্যা যোগ করুন</strong><small>প্রশ্ন লিখলে বোতাম চাপার পর তার উত্তর তৈরি হবে। ওষুধ/মাত্রা কেবল অ্যাপে মেলা DAE-যাচাইকৃত রেকর্ড থেকে আসবে; না মিললে তা স্পষ্ট বলা হবে।</small></span><Sparkles size={18}/></label>
+        <button type="button" className="primary-button full-width" onClick={reanalyse} disabled={!plantImage || loading}>{loading ? <LoaderCircle size={17} className="spin"/> : <ScanLine size={17}/>} {loading ? "বিশ্লেষণ চলছে" : question.trim() ? "ছবির ফলসহ প্রশ্নের উত্তর পান" : "ছবি আবার বিশ্লেষণ করুন"}</button>
+        <p className="tiny-note"><ShieldCheck size={14}/> প্রতিবার প্রশ্নের উত্তর চাইলে একই ছবি আবার বিশ্লেষণ সেবায় পাঠানো হবে।</p>
       </div>
     </section>
 
@@ -709,7 +717,7 @@ function DiseaseAssistant({
         </div>
       </details>
 
-      {result.summary_requested && <section className="panel ai-summary-card"><div className="panel-heading"><div><p className="section-kicker">ঐচ্ছিক Krittim-S1 ব্যাখ্যা</p><h2>আরও ব্যাখ্যা</h2></div><Sparkles size={20} className="muted-icon"/></div>{result.summary_available && result.summary ? <MarkdownContent content={result.summary} className="ai-summary-text"/> : <p className="small-caveat">এই মুহূর্তে AI ব্যাখ্যা পাওয়া যায়নি। সংক্ষিপ্ত নিয়মভিত্তিক নির্দেশনা উপরে আছে।</p>}<p className="small-caveat">Krittim-S1 ছবির pixel দেখে না; এটি Krittim AI Vision-এর সংক্ষিপ্ত ফল ও আপনার লেখা লক্ষণ থেকে ব্যাখ্যা দেয়। AI ব্যাখ্যা কোনো প্রেসক্রিপশন নয়।</p></section>}
+      {result.summary_requested && question.trim() === submittedQuestion && <section className="panel ai-summary-card"><div className="panel-heading"><div><p className="section-kicker">ছবি-ভিত্তিক উত্তর</p><h2>{question.trim() ? "আপনার প্রশ্নের উত্তর" : "আরও ব্যাখ্যা"}</h2></div><Sparkles size={20} className="muted-icon"/></div>{result.summary_available && result.summary ? <MarkdownContent content={result.summary} className="ai-summary-text"/> : <p className="small-caveat">এই মুহূর্তে উত্তর পাওয়া যায়নি। উপরের ছবি-ফল ও নিয়মভিত্তিক DAE তথ্য দেখুন।</p>}<p className="small-caveat">সাধারণ AI ব্যাখ্যার জন্য Groq text AI-তে প্রশ্ন ও ছবির সংক্ষিপ্ত ফল যেতে পারে, ছবির pixel নয়। ওষুধের তথ্য আলাদা DAE-যাচাইকৃত card/template থেকে। উত্তরটি নিশ্চিত রোগনির্ণয় বা প্রেসক্রিপশন নয়।</p></section>}
     </section>}
   </>;
 }

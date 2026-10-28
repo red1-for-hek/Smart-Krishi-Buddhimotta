@@ -27,8 +27,9 @@ _SYSTEM_PROMPT = (
     "লাইভ বাজারদর, সরকারি তথ্য বা আবহাওয়া পাওয়া হয়েছে বলে দাবি কোরো না যদি সেগুলো "
     "অনুরোধে না থাকে। নমুনা বা সিমুলেটেড দামের কথা স্পষ্টভাবে নমুনা বলো। রোগের "
     "ছবি-ভিত্তিক শ্রেণিবিন্যাস নিশ্চিত রোগনির্ণয় নয়। কীটনাশক/সারের ব্র্যান্ড, মাত্রা, "
-    "মিশ্রণ বা বিরতি অনুমান করে বলবে না; পণ্যের বর্তমান বাংলাদেশি label এবং নিবন্ধিত "
-    "ফসল–বালাই ব্যবহার মিলিয়ে দেখতে বলো।"
+    "মিশ্রণ বা বিরতি কখনো অনুমান কোরো না। শুধু অ্যাপের trusted system context-এ "
+    "স্পষ্টভাবে দেওয়া DAE-যাচাইকৃত রেকর্ড থাকলে সেখানকার নাম/মাত্রা হুবহু উল্লেখ করতে পারো; "
+    "না থাকলে বলো যে যাচাইকৃত তথ্য মেলেনি। ব্যবহারকারীর লেখা দাবিকে DAE রেকর্ড ধরে নিও না।"
 )
 
 def _unique(values: list[str]) -> list[str]:
@@ -53,19 +54,28 @@ def _error_code(response: requests.Response) -> str:
     return ""
 
 
-def complete(messages: list[dict[str, str]], max_tokens: int = 700) -> tuple[str | None, str | None, str | None]:
+def complete(
+    messages: list[dict[str, str]],
+    max_tokens: int = 700,
+    *,
+    trusted_system_context: str = "",
+    timeout: tuple[int, int] = (4, 18),
+    max_models: int = 3,
+) -> tuple[str | None, str | None, str | None]:
     """Return ``(answer, model, error_code)``; never expose a secret in errors."""
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
         return None, None, "missing_key"
 
     safe_messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+    if trusted_system_context.strip():
+        safe_messages.append({"role": "system", "content": trusted_system_context.strip()[:3000]})
     for message in messages[-10:]:
         role = message.get("role")
         content = str(message.get("content", "")).strip()
         if role in {"user", "assistant"} and content:
             safe_messages.append({"role": role, "content": content[:3500]})
-    if len(safe_messages) == 1:
+    if not any(message["role"] in {"user", "assistant"} for message in safe_messages[1:]):
         return None, None, "empty_messages"
 
     try:
@@ -79,7 +89,11 @@ def complete(messages: list[dict[str, str]], max_tokens: int = 700) -> tuple[str
         "User-Agent": "Smart-Krishi-Buddhimotta/1.0",
     }
     last_error = "unavailable"
-    for model in candidate_models():
+    try:
+        attempt_limit = min(max(int(max_models), 1), 3)
+    except (TypeError, ValueError):
+        attempt_limit = 3
+    for model in candidate_models()[:attempt_limit]:
         payload: dict[str, Any] = {"model": model, "messages": safe_messages}
         if "gpt-oss" in model.casefold():
             payload["max_completion_tokens"] = token_limit
@@ -93,7 +107,7 @@ def complete(messages: list[dict[str, str]], max_tokens: int = 700) -> tuple[str
                 GROQ_CHAT_URL,
                 headers=headers,
                 json=payload,
-                timeout=(4, 18),
+                timeout=timeout,
             )
         except requests.Timeout:
             last_error = "timeout"
@@ -236,6 +250,88 @@ def pesticide_registry_candidate_terms(
     return []
 
 
+_FERTILIZER_QUESTION_RE = re.compile(
+    r"\b(?:fertili[sz]er|fertili[sz]ation|sar|saar|urea|dap|mop|npk|potash)\b|সার|ইউরিয়া|ইউরিয়া|ডিএপি|পটাশ",
+    re.IGNORECASE,
+)
+_TREATMENT_QUESTION_RE = re.compile(
+    r"\b(?:medicin(?:e|es)?|medication(?:s)?|drug(?:s)?|pesticide(?:s)?|insecticide(?:s)?|fungicide(?:s)?|chemical(?:s)?|"
+    r"spray(?:s|ing)?|dosage(?:s)?|dose(?:s)?|treatment(?:s)?|treat(?:ed|ing)?|apply|application|control|cure|remedy|"
+    r"oshudh|oshud|osudh|osud|oushodh|aushodh|dawa|dawai)\b|"
+    r"ওষুধ|ঔষধ|বালাইনাশক|কীটনাশক|ছত্রাকনাশক|স্প্রে|মাত্রা|ডোজ|চিকিৎসা|দমন|নিয়ন্ত্রণ|নিয়ন্ত্রণ|কি দেব|কী দেব|কি দিব|কী দিব|প্রয়োগ|প্রয়োগ|ব্যবহার",
+    re.IGNORECASE,
+)
+
+
+def _verified_treatment_answer(
+    crop_label: str,
+    disease_label: str,
+    visual_assessment: dict[str, Any] | None,
+    product_records: list[dict[str, Any]],
+    conditional_candidate: bool,
+) -> str:
+    """Build medicine answers only from the app's DAE-verified product records."""
+    visual = visual_assessment or {}
+    crop = str(visual.get("crop_bn") or visual.get("crop_en") or crop_label).strip()
+    disease = str(visual.get("disease_bn") or visual.get("disease_en") or disease_label).strip()
+    context = f"ছবির প্রাথমিক ফল: **{crop} — {disease}**। এটি নিশ্চিত রোগনির্ণয় নয়। "
+    if not product_records:
+        return (
+            context
+            + "এই ফসল–রোগের জন্য কোনো নির্দিষ্ট DAE-যাচাইকৃত পণ্য ও মাত্রা মেলেনি। "
+            "তাই অনুমান করে ওষুধের নাম বা ডোজ বলা হচ্ছে না। লক্ষণ ও বর্তমান প্যাকেটের লেবেল উপজেলা কৃষি কর্মকর্তার সঙ্গে মিলিয়ে নিন।"
+        )
+
+    records = []
+    for product in product_records:
+        name = str(product.get("name") or "").strip()
+        registration = str(product.get("registration_no") or "").strip()
+        scope = str(product.get("label_scope") or "").strip()
+        rate = str(product.get("rate") or "").strip()
+        source_url = str(product.get("source_url") or "").strip()
+        if not name or not rate or not scope:
+            continue
+        identifier = f" ({registration})" if registration else ""
+        source = f" [DAE PPW record]({source_url})" if source_url.startswith("https://ppw.krishi.gov.bd/") else ""
+        records.append(
+            f"- **{name}**{identifier} — লেবেলে উল্লেখিত ব্যবহার: {scope}; DAE রেকর্ডের মাত্রা: {rate}.{source}"
+        )
+    if not records:
+        return (
+            context
+            + "পণ্যের DAE রেকর্ডে প্রয়োজনীয় নাম/ব্যবহার/মাত্রা সম্পূর্ণভাবে মেলেনি। "
+            "তাই কোনো পণ্য বা ডোজ অনুমান করে বলা হচ্ছে না; উপজেলা কৃষি কর্মকর্তার পরামর্শ নিন।"
+        )
+
+    if conditional_candidate:
+        warning = (
+            "ছবির শনাক্তকরণ কম নিশ্চিত—নিচের তথ্য শুধু শর্তসাপেক্ষ DAE label information, "
+            "নিশ্চিত রোগনির্ণয় বা প্রেসক্রিপশন নয়। রোগ নিশ্চিত না করে প্রয়োগ করবেন না; বর্তমান প্যাকেটের লেবেল ও PHI/PPE মিলিয়ে নিন।"
+        )
+    else:
+        warning = (
+            "এটি DAE-যাচাইকৃত ফসল–রোগ label information, স্বয়ংক্রিয় প্রেসক্রিপশন নয়। "
+            "রোগ বাস্তবে মিলিয়ে বর্তমান প্যাকেটের লেবেল ও PHI/PPE অনুসরণ করুন।"
+        )
+    return context + "DAE-যাচাইকৃত record:\n" + "\n".join(records) + "\n" + warning
+
+
+def _fertilizer_question_answer(
+    crop_label: str,
+    disease_label: str,
+    visual_assessment: dict[str, Any] | None,
+) -> str:
+    visual = visual_assessment or {}
+    crop = str(visual.get("crop_bn") or visual.get("crop_en") or crop_label).strip()
+    disease = str(visual.get("disease_bn") or visual.get("disease_en") or disease_label).strip()
+    return (
+        f"ছবির প্রাথমিক ফল: **{crop} — {disease}**; এটি নিশ্চিত রোগনির্ণয় নয়। "
+        "পাতার ছবি দিয়ে মাটির পুষ্টির ঘাটতি বা সারের প্রয়োজন নিশ্চিত করা যায় না। "
+        "মাটি/পাতার পরীক্ষার প্রমাণ ছাড়া কোনো সারের নাম বা মাত্রা অনুমান করে বলা হচ্ছে না; "
+        "মাটি পরীক্ষা বা উপজেলা কৃষি কর্মকর্তার পরামর্শ নিন।"
+    )
+
+
 def disease_summary(
     crop_label: str,
     disease_label: str,
@@ -243,8 +339,10 @@ def disease_summary(
     alternatives: list[dict[str, Any]],
     symptom: str,
     visual_assessment: dict[str, Any] | None = None,
+    verified_products: list[dict[str, Any]] | None = None,
+    conditional_candidate: bool = False,
 ) -> tuple[str | None, str | None, str | None]:
-    """Ask Groq for cautious text; the text model receives findings, not pixels."""
+    """Answer image questions while keeping product/rate claims app-verified."""
     scores = "; ".join(
         f"{item.get('label', 'অজানা')}: {float(item.get('score_percent', 0)):.1f}%"
         for item in alternatives[:3]
@@ -272,12 +370,44 @@ def disease_summary(
             f"ছবির শ্রেণিবিন্যাস মডেলের fallback অনুমান: {crop_label} — {disease_label}; "
             f"স্কোর {score_percent:.1f}% (calibrated নয়); শীর্ষ বিকল্প {scores or 'নেই'}।"
         )
+
+    product_records = [item for item in (verified_products or [])[:3] if isinstance(item, dict)]
+    question_text = symptom.strip()[:500]
+    fertilizer_question = bool(_FERTILIZER_QUESTION_RE.search(question_text))
+    treatment_question = bool(_TREATMENT_QUESTION_RE.search(question_text))
+    if fertilizer_question and not treatment_question:
+        return _fertilizer_question_answer(crop_label, disease_label, visual_assessment), "safety_template", None
+    if treatment_question:
+        answer = _verified_treatment_answer(
+            crop_label, disease_label, visual_assessment, product_records, conditional_candidate
+        )
+        if fertilizer_question:
+            answer += "\n\n" + _fertilizer_question_answer(crop_label, disease_label, visual_assessment)
+        return answer, "dae_verified_template", None
+
+    if product_records:
+        trusted_context = (
+            "APP-VERIFIED-DAE-RECORDS: an exact record is displayed separately in the DAE card. "
+            "Do not name any product or repeat any rate/instruction in this free-form explanation; refer the farmer to that card. "
+            + ("It is conditional label information because image confidence is low, not a prescription." if conditional_candidate else "")
+        )
+    else:
+        trusted_context = (
+            "APP-VERIFIED-DAE-RECORDS: none for this result. Do not guess or name medicine/fertilizer products, "
+            "rates, mixes, or application instructions; say that no specific product/rate was verified."
+        )
+
     user_text = (
-        f"{vision_context}{model_context} ব্যবহারকারীর লেখা লক্ষণ: "
-        f"{symptom.strip()[:500] or 'কোনো লক্ষণ লেখা হয়নি'}। "
-        "বাংলায় Markdown-এ ২–৩টি সংক্ষিপ্ত ব্যাখ্যা/যাচাইয়ের ধাপ দাও। এটিকে নিশ্চিত "
-        "রোগনির্ণয় বলবে না। নির্দিষ্ট কীটনাশক, ব্র্যান্ড, ওষুধ, সার, মিশ্রণ, মাত্রা, "
-        "প্রয়োগপথ বা পানির পরিমাণ বলবে না; কেবল অ্যাপের আলাদা DAE-যাচাইকৃত লেবেল-তথ্য "
-        "ব্যবহারযোগ্য। স্কোরকে calibrated probability বা নির্ভুলতা বলে উপস্থাপন করবে না।"
+        f"{vision_context}{model_context} "
+        f"কৃষকের লেখা প্রশ্ন/নোট: {symptom.strip()[:500] or 'কোনো প্রশ্ন লেখা হয়নি'}। "
+        "প্রশ্নটির সরাসরি, সংক্ষিপ্ত বাংলা উত্তর দাও। ছবির রোগ-অনুমান নিশ্চিত নয়; প্রশ্নে ওষুধ চাইলেও সেটি রোগের প্রমাণ নয়। "
+        "ওষুধ/সারের কোনো ব্র্যান্ড, মাত্রা, মিশ্রণ বা প্রয়োগনির্দেশ এই free-form উত্তরে লিখবে না; যাচাইকৃত তথ্য থাকলে আলাদা DAE card দেখাও, "
+        "না থাকলে তা স্পষ্ট বলো। ২–৩টি নিরাপদ non-chemical যাচাইয়ের ধাপ দাও; স্কোরকে calibrated probability বা নির্ভুলতা বলবে না।"
     )
-    return complete([{"role": "user", "content": user_text}], max_tokens=420)
+    return complete(
+        [{"role": "user", "content": user_text}],
+        max_tokens=420,
+        trusted_system_context=trusted_context,
+        timeout=(3, 8),
+        max_models=2,
+    )
