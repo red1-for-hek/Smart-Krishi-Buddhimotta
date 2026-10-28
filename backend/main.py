@@ -33,6 +33,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from backend.ai_service import complete, disease_summary
+from backend.dae_live_lookup import lookup_ppw_live_product
 from backend.disease_guidance import (
     get_disease_guidance,
     get_unclassified_visual_guidance,
@@ -435,6 +436,42 @@ def _visual_disease_label(visual: dict[str, Any]) -> str:
     )
 
 
+def _augment_with_live_ppw_guidance(guidance: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
+    """Try the official PPW source only after the curated allow-list misses."""
+    if guidance.get("products"):
+        return guidance
+
+    lookup = lookup_ppw_live_product(visual)
+    status = lookup.get("status")
+    product = lookup.get("product")
+    if status == "matched" and isinstance(product, dict):
+        guidance["category"] = "possible_disease_with_verified_label"
+        guidance["products"] = [product]
+        guidance["product_note"] = (
+            "কিউরেটেড তালিকায় সরাসরি match না থাকায় AI-এর ফসল ও রোগের নাম দিয়ে সরকারি DAE PPW-এর লাইভ public search করা হয়েছে। "
+            "ছবিটি PPW-তে পাঠানো হয়নি; একই official ব্যবহারবিধিতে ফসল–রোগ ও মাত্রা মিললেই নিচের পণ্য দেখানো হয়েছে। "
+            "এটি সক্রিয় নিবন্ধন বা স্থানীয় দোকানে মজুতের নিশ্চয়তা নয়—ব্যবহারের আগে আসল প্যাকেটের বর্তমান লেবেল, PHI ও নিরাপত্তা নির্দেশনা মিলিয়ে নিন।"
+        )
+        checked_on = lookup.get("checked_on")
+        if isinstance(checked_on, str):
+            guidance["source_checked_on"] = checked_on
+        sources = guidance.get("sources", [])
+        if isinstance(sources, list) and not any(source.get("url") == product.get("source_url") for source in sources if isinstance(source, dict)):
+            sources.append({"label": product.get("source_label", "DAE PPW live product record"), "url": product.get("source_url", "")})
+        guidance["sources"] = sources
+    elif status == "no_match":
+        guidance["product_note"] = (
+            "কিউরেটেড DAE তালিকায় এই ফসল–রোগের পণ্য ছিল না। সরকারি PPW live search-এও একই ব্যবহারবিধিতে ফসল, রোগ ও নির্দিষ্ট মাত্রা একসঙ্গে যাচাই করা যায়নি; "
+            "তাই ব্র্যান্ড বা ডোজ অনুমান করে দেওয়া হচ্ছে না। পরে আবার চেষ্টা করুন বা স্থানীয় কৃষি কর্মকর্তার সঙ্গে মিলিয়ে নিন।"
+        )
+    elif status == "unavailable":
+        guidance["product_note"] = (
+            "কিউরেটেড DAE তালিকায় নির্দিষ্ট পণ্য মেলেনি এবং সরকারি PPW live search-এ এখন সংযোগ পাওয়া যায়নি। "
+            "যাচাইহীন ব্র্যান্ড/ডোজ দেওয়া হচ্ছে না; পরে আবার চেষ্টা করুন বা স্থানীয় কৃষি কর্মকর্তার সঙ্গে মিলিয়ে নিন।"
+        )
+    return guidance
+
+
 @app.post("/api/disease")
 def disease(request: DiseaseRequest) -> dict[str, Any]:
     image_bytes = _parse_image_data_url(request.image_data_url)
@@ -545,6 +582,8 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
             "confidence_band": visual_result.get("confidence_band", "low"),
         }
         guidance = get_visual_disease_guidance(visual_result)
+        if not guidance["products"]:
+            guidance = _augment_with_live_ppw_guidance(guidance, visual_result)
         scope_warning = (
             "Krittim AI Vision-এর ছবি-ভিত্তিক ফল নিশ্চিত রোগনির্ণয় নয়—ভুল হতে পারে। "
             "দৃশ্যমান লক্ষণ ও প্যাকেটের বর্তমান লেবেল মিলিয়ে নিন; DAE পণ্য কেবল নির্দিষ্ট crop–disease record মেললে দেখানো হয়।"

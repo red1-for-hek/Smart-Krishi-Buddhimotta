@@ -136,6 +136,74 @@ class DiseaseApiTests(unittest.TestCase):
         self.assertEqual(result["guidance"]["products"][0]["registration_no"], "AP-5112")
         self.assertEqual(result["guidance"]["products"][0]["rate"], "২ মিলি/লিটার পানি; ১০০০ মিলি/হেক্টর")
 
+    def test_missing_curated_match_uses_live_ppw_result_without_sending_photo_to_ppw(self) -> None:
+        visual = {
+            "leaf_status": "leaf",
+            "crop_en": "eggplant",
+            "crop_bn": "বেগুন",
+            "disease_en": "fruit rot",
+            "disease_bn": "ফল পচা",
+            "cause_type": "fungal",
+            "pathogen_en": None,
+            "visible_signs_bn": ["ফলে পচা দাগ"],
+            "nonchemical_actions_bn": [],
+            "confidence_band": "high",
+            "plantvillage_class_label": None,
+        }
+        live_product = {
+            "name": "Example PPW Product",
+            "registration_no": "AP-1234",
+            "active_ingredients": "Example active",
+            "label_scope": "বেগুন — ফল পচা",
+            "rate": "২ গ্রাম/লিটার পানি",
+            "application_method": "বর্তমান লেবেল দেখুন।",
+            "directions": ["Exact DAE use verified."],
+            "source_label": "DAE PPW live product record — Example PPW Product",
+            "source_url": "https://ppw.krishi.gov.bd/pesticide-details/1234",
+        }
+        vision_response = {
+            "available": True,
+            "status": "ok",
+            "model": "qwen/qwen3.8-27b",
+            "result": visual,
+            "image_sent_to_groq": True,
+        }
+        fake_module = self._fake_model_module()
+        with patch.dict(sys.modules, {"disease_model": fake_module}), patch.object(
+            main, "_load_disease_model", side_effect=AssertionError("Qwen result should not load local model")
+        ), patch.object(main, "analyze_leaf_image", return_value=vision_response), patch.object(
+            main, "lookup_ppw_live_product", return_value={"status": "matched", "product": live_product, "checked_on": "2026-10-28"}
+        ) as ppw_search:
+            result = main.disease(DiseaseRequest(image_data_url=_image_data_url()))
+
+        ppw_search.assert_called_once_with(visual)
+        self.assertEqual(result["guidance"]["products"], [live_product])
+        self.assertEqual(result["guidance"]["source_checked_on"], "2026-10-28")
+        self.assertIn("ছবিটি PPW-তে পাঠানো হয়নি", result["guidance"]["product_note"])
+        self.assertIn(live_product["source_url"], [source["url"] for source in result["guidance"]["sources"]])
+
+    def test_unverified_live_search_results_never_create_a_product_recommendation(self) -> None:
+        visual = {
+            "leaf_status": "leaf",
+            "crop_en": "jute",
+            "crop_bn": "পাট",
+            "disease_en": "leaf spot",
+            "disease_bn": "পাতার দাগ",
+            "cause_type": "fungal",
+            "confidence_band": "medium",
+            "plantvillage_class_label": None,
+        }
+        for status, expected_copy in (
+            ("no_match", "যাচাই করা যায়নি"),
+            ("unavailable", "সংযোগ পাওয়া যায়নি"),
+        ):
+            with self.subTest(status=status), patch.object(
+                main, "lookup_ppw_live_product", return_value={"status": status, "product": None}
+            ):
+                guidance = main._augment_with_live_ppw_guidance(main.get_unclassified_visual_guidance(), visual)
+            self.assertEqual(guidance["products"], [])
+            self.assertIn(expected_copy, guidance["product_note"])
+
     def test_local_classifier_remains_the_fallback_when_qwen_is_not_configured(self) -> None:
         labels = list(DISEASE_TRANSLATION)
         probabilities = numpy.zeros(len(labels), dtype=numpy.float64)
@@ -195,12 +263,15 @@ class DiseaseApiTests(unittest.TestCase):
         fake_module = self._fake_model_module()
         with patch.dict(sys.modules, {"disease_model": fake_module}), patch.object(
             main, "_load_disease_model", side_effect=FileNotFoundError()
-        ), patch.object(main, "analyze_leaf_image", return_value=vision_response):
+        ), patch.object(main, "analyze_leaf_image", return_value=vision_response), patch.object(
+            main, "lookup_ppw_live_product", return_value={"status": "no_match", "product": None}
+        ) as ppw_search:
             result = main.disease(DiseaseRequest(image_data_url=_image_data_url()))
 
+        ppw_search.assert_called_once_with(visual)
         self.assertEqual(result["diagnosis"]["crop_label"], "ক্যাপসিকাম")
         self.assertEqual(result["guidance"]["products"], [])
-        self.assertIn("যাচাইকৃত DAE", result["guidance"]["product_note"])
+        self.assertIn("যাচাই করা যায়নি", result["guidance"]["product_note"])
 
     def test_missing_vision_disease_text_uses_a_valid_local_class_label(self) -> None:
         visual = {

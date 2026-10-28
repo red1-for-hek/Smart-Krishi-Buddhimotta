@@ -699,7 +699,7 @@ function DiseaseAssistant({
             <p className="small-caveat">এগুলো softmax score, ক্যালিব্রেটেড সম্ভাবনা বা নির্ভুলতা নয়।</p>
           </div> : <p className="small-caveat">স্থানীয় ৩৮-শ্রেণির মডেল এই অনুরোধে চালু ছিল না।</p>}
           {result.guidance.products.map((product) => <article className="product-card" key={product.registration_no}>
-            <div className="product-card-heading"><div><h3>{product.name}</h3><span>AP নম্বর: {product.registration_no} · {product.active_ingredients}</span></div><span className="verified-tag">DAE record</span></div>
+            <div className="product-card-heading"><div><h3>{product.name}</h3><span>AP নম্বর: {product.registration_no} · {product.active_ingredients}</span></div><span className="verified-tag">{product.source_label.includes("live") ? "DAE live record" : "DAE record"}</span></div>
             <p><strong>লেবেলে উল্লেখিত ব্যবহার:</strong> {product.label_scope}</p><p><strong>রেকর্ডের মাত্রা:</strong> {product.rate}</p><p><strong>প্রয়োগপথ:</strong> {product.application_method}</p>
             <ul>{product.directions.map((direction, index) => <li key={index}>{direction}</li>)}</ul>
             <a className="product-source-link" href={product.source_url} target="_blank" rel="noreferrer">{product.source_label} <MoveUpRight size={14}/></a>
